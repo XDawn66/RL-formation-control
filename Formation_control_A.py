@@ -3,6 +3,9 @@ import pygame
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from env import FormationEnv
+from os
+from stable_baselines3 import SAC
 # Simulation Parameters
 WIDTH, HEIGHT = 1980, 1080
 FPS = 60
@@ -98,8 +101,9 @@ class Robot:
         # self.history = [pos]
         self.x_speed = self.state[1]
         self.y_speed = self.state[3]
+        self.action = [0,0]
 
-    def update(self, neighbors, desired_states):
+    def update(self, neighbors, desired_states, action):
         # Build q (stack of all robot states, each 1x4), will get 3x4 matrix
         q_all = np.array([r.state for r in neighbors])
 
@@ -131,7 +135,7 @@ class Robot:
         # velocity = self.state[[1, 3]]  # (vx, vy)
         # r_i -= Kd_damping * velocity
 
-        r_i = action[self.idx * 2 : self.idx * 2 + 2]
+        r_i = self.action[self.idx * 2 : self.idx * 2 + 2]
         dq = A0 @ self.state.reshape(4, 1) + B0 @ r_i.reshape(2, 1)
         self.state += dq.flatten() * DT
         #print(f"Robot {self.idx} -  ri: {dq.flatten() * DT}")
@@ -152,7 +156,7 @@ class Robot:
         error = self.get_obs()
         formation_error = np.linalg.norm(L1 @ error)
         tracking_error = np.linalg.norm(error)
-        control_effort = np.linalg.norm(action)
+        control_effort = np.linalg.norm(self.action)
         reward = -w1 * formation_error**2 - w2 * tracking_error**2 - w3 * control_effort**2
         return reward
     
@@ -161,71 +165,86 @@ class Robot:
         x, y = int(self.state[0]), int(self.state[2])
         pygame.draw.circle(screen, (0, 255, 0), (x, y), 10)
 
-# Initialize Pygame and robots
-pygame.init()
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-clock = pygame.time.Clock()
+def run_sim(robots):
+    total_steps =  20000
+    angle = 0.0  # Initial angle for rotation
+    TARGET = np.array([random.uniform(100, WIDTH - 100), random.uniform(100, HEIGHT - 100)]) 
+    leader_robot = robots[0]
+    formation_anchor = robots[0].state[[0, 2]]  # Anchor position is the first robot's position
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    env = FormationEnv(screen)
+    model = SAC("MlpPolicy", env,verbose=1, tensorboard_log="./sac_formation_env/")
+    clock = pygame.time.Clock()
 
-# creating robots with initial positions
-robots = [
-    Robot(i, (
-        np.random.uniform(10, WIDTH -100),   # random x within (10, 100)
-        np.random.uniform(10, HEIGHT - 100)   # random y within bounds
-    ))
-    for i in range(NUM_ROBOTS)
-]
+    # Main Loop
+    running = True
+    while running:
+        elaspsed_time = pygame.time.get_ticks() / 1000.0  # Get elapsed time in seconds
+        hist["t"].append(elaspsed_time)
+        hist["x"].append([r.state[0] for r in robots])  # all x
+        hist["y"].append([r.state[2] for r in robots])  # all y
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
 
+        screen.fill((30, 30, 30))
 
-angle = 0.0  # Initial angle for rotation
-TARGET = np.array([random.uniform(100, WIDTH - 100), random.uniform(100, HEIGHT - 100)]) 
-leader_robot = robots[0]
-formation_anchor = robots[0].state[[0, 2]]  # Anchor position is the first robot's position
+        direction = TARGET - formation_anchor
+        distance = np.linalg.norm(direction)
 
-# Main Loop
-running = True
-while running:
-    elaspsed_time = pygame.time.get_ticks() / 1000.0  # Get elapsed time in seconds
-    hist["t"].append(elaspsed_time)
-    hist["x"].append([r.state[0] for r in robots])  # all x
-    hist["y"].append([r.state[2] for r in robots])  # all y
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
+        if distance > 5:  # only move if not yet at target
+            velocity = direction / distance * 40  # control speed (tune 30)
+        else:
+            velocity = np.array([0.0, 0.0])  # stop when close enough
 
-    screen.fill((30, 30, 30))
+        FORMATION_VELOCITY = velocity
 
-    direction = TARGET - formation_anchor
-    distance = np.linalg.norm(direction)
+        formation_anchor += FORMATION_VELOCITY * DT
+        pygame.draw.circle(screen, (255, 0, 0), (int(formation_anchor[0]), int(formation_anchor[1])), 10)
+        
+        # 3x4 matrix for desired states
 
-    if distance > 5:  # only move if not yet at target
-        velocity = direction / distance * 40  # control speed (tune 30)
-    else:
-        velocity = np.array([0.0, 0.0])  # stop when close enough
-
-    FORMATION_VELOCITY = velocity
-
-    formation_anchor += FORMATION_VELOCITY * DT
-    pygame.draw.circle(screen, (255, 0, 0), (int(formation_anchor[0]), int(formation_anchor[1])), 10)
-    
-    # 3x4 matrix for desired states
-
-    desired_states = np.array([
-    [formation_anchor[0] + offset[0], 0, formation_anchor[1] + offset[1], 0]
-        for offset in FORMATION_OFFSET
-    ])
-    #print(f"Desired states: {desired_states.shape}")
+        desired_states = np.array([
+        [formation_anchor[0] + offset[0], 0, formation_anchor[1] + offset[1], 0]
+            for offset in FORMATION_OFFSET
+        ])
+        #print(f"Desired states: {desired_states.shape}")
 
 
-    THRESHOLD = 0.0  # tweak as needed
-    pygame.draw.rect(screen, (255, 0, 0), pygame.Rect(TARGET[0] - 5, TARGET[1] - 5, 30, 30))
+        THRESHOLD = 0.0  # tweak as needed
+        pygame.draw.rect(screen, (255, 0, 0), pygame.Rect(TARGET[0] - 5, TARGET[1] - 5, 30, 30))
 
-    for i, robot in enumerate(robots):
-        robot.update(robots, desired_states)
-        robot.draw(screen)
+        for i, robot in enumerate(robots):
+            robot.update(robots, desired_states)
+            # robot.draw(screen)
+        
+        info = pygame.display.Info()
+        obs, info = env.reset()
+        action, _states = model.predict(obs, deterministic = True)
+        obs, reward, terminated, end, info = env.step(action)
+        
+        env.render()
+        total_steps += 1  # Increment step count
+
+        clock.tick(FPS)
+        env.close()
+        
+
+if __name__ == "__main__":
+    # Initialize Pygame and robots
+    pygame.init()
+    # creating robots with initial positions
+    robots = [
+        Robot(i, (
+            np.random.uniform(10, WIDTH -100),   # random x within (10, 100)
+            np.random.uniform(10, HEIGHT - 100)   # random y within bounds
+        ))
+        for i in range(NUM_ROBOTS)
+    ]
+    run_sim(robots)
 
 
-    pygame.display.flip()
-    clock.tick(FPS)
+
 
 pygame.quit()
 hist["t"] = np.array(hist["t"])
