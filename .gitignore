@@ -1,0 +1,19 @@
+# Trained RL models/checkpoints
+models/
+*.zip
+
+# TensorBoard logs
+sac_formation_env/
+ppo_formation_env/
+DDPG_formation_env/
+ddpg_formation_env/
+runs/
+
+# Python/cache
+__pycache__/
+*.pyc
+
+# Generated plots
+*.png
+
+!demo/**/*.zip
