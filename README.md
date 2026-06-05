@@ -2,6 +2,12 @@
 
 This project explores reinforcement learning methods for multi-robot formation control. The goal is to investigate whether model-free RL policies can learn stable formation behavior for multiple robots under a desired formation trajectory, and to compare direct-action RL methods with more structured controller-based approaches.
 
+## Demo Video
+
+Watch the demo here:
+
+https://youtu.be/FptJdGw1jp8
+
 ## Project Overview
 
 The system consists of multiple robots modeled with simplified double-integrator dynamics:
