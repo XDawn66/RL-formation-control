@@ -119,21 +119,13 @@ PPO: more conservative but weak reference tracking
 DDPG: two agents coordinate, one agent diverges
 ```
 
-Generated trajectory plots are saved as:
-
-```text
-robot_trajectories_with_anchor.png
-formation_x.png
-formation_y.png
-```
-
-Example image links:
-
-```markdown
+Generated trajectory plots:
+### SAC
 ![SAC trajectory](plots/SAC_robot_trajectories_with_anchor.png)
+### PPO
 ![PPO trajectory](plots/PPO_robot_trajectories_with_anchor.png)
+### DDPG
 ![DDPG trajectory](plots/DDPG_robot_trajectories_with_anchor.png)
-```
 
 ## Next Step: Structured Gain Learning
 
@@ -173,7 +165,7 @@ RL-formation-control/
 ├── requirements.txt           # Python dependencies
 │
 ├── models/                    # Trained model checkpoints, ignored by git
-├── demo/                    # demo models
+├── demo/                      # demo models
 ├── plots/                     # Generated figures
 └── logs/                      # TensorBoard logs
 ```
@@ -208,10 +200,18 @@ model.learn(total_timesteps=100000)
 model.save("models/example_model")
 ```
 
-To load a saved model:
+To load a saved model, uncomment the following section in `Formation_control_A.py`:
 
 ```python
 model = SAC.load("models/example_model", env=myenv)
+```
+
+and
+
+comment the training section in `Formation_control_A.py`:
+```python
+model.learn(total_timesteps=100000)
+model.save("models/example_model")
 ```
 
 ## Notes on Trained Models
