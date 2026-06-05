@@ -84,12 +84,22 @@ def run_sim():
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     myenv = env.FormationEnv(screen)
     num_robots = myenv.num_of_bots    # leader_robot = robots[0]
+
+    # if you want to train from scratch, use the line below to create a new model. Otherwise, load a pre-trained model with the lines below that.
     #model = DDPG("MlpPolicy", myenv,verbose=1, tensorboard_log="./DDPG_formation_env/")
-    model = PPO.load("models/test_trace_4711_no_target_ppo/test_4711_400k.zip",myenv, tensorboard_log="./sac_car_env/")
-    #model = SAC.load("models/early_test/test4_150k",myenv, tensorboard_log="./sac_car_env/")
-    #model = SAC.load("models/no_target_sac/test_4711_400k.zip",myenv, tensorboard_log="./sac_car_env/")
+
+    # Load a pre-trained model (make sure to adjust the path and filename as needed), only one of the lines below should be uncommented at a time, depending on which model you want to load
+
+    #model = PPO.load("demo/no_target_ppo/test_4711_400k.zip",myenv, tensorboard_log="./sac_car_env/")
+    model = SAC.load("demo/no_target_sac/test_4711_400k.zip",myenv, tensorboard_log="./sac_car_env/")
+    #model = DDPG.load("demo/no_target_ddpg/test_4711_400k.zip",myenv, tensorboard_log="./DDPG_formation_env/")
+
+    # train a model
+
     # model.learn(total_steps)
     # model.save(f"models/test_trace_4711/test_trace_4711_300k")
+
+    # training in increments and saving intermediate models
     # for i in range(1, 5):
     #     model.learn(total_timesteps=100000, reset_num_timesteps=False)
     #     model.save(f"models/no_target_ddpg/test_4711_{i*100}k")
