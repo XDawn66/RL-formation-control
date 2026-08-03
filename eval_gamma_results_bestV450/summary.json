@@ -1,0 +1,20 @@
+{
+  "model": "models/sac_gamma_9403001_V/test_450k.zip",
+  "episodes": 20,
+  "max_steps": 20000,
+  "formation_success_threshold": 0.85,
+  "tracking_success_threshold": 0.8,
+  "success_rate": 0.95,
+  "final_formation_error": {
+    "mean": 0.5405542167082931,
+    "std": 0.5987979797216281,
+    "min": 0.08168735658671053,
+    "max": 3.0004118573534813
+  },
+  "final_tracking_error": {
+    "mean": 0.18018473890276432,
+    "std": 0.19959932657387602,
+    "min": 0.027229118862236848,
+    "max": 1.0001372857844937
+  }
+}

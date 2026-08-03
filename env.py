@@ -6,18 +6,22 @@ import Formation_control_A as base
 import random
 
 class FormationEnv(gym.Env):
-    def __init__(self, screen):
+    def __init__(self, screen, render_mode=True):
         self.WIDTH = 1980
         self.HEIGHT = 1080
         self.screen = screen
+        self.render_mode = render_mode
         self.dt = 0.005
 
         self.num_of_bots = 3
         self.robots = []
-        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2* self.num_of_bots,), dtype=np.float32)
+        # self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2* self.num_of_bots,), dtype=np.float32)
+        # self.observation_space = spaces.Box(low=-1.0, high=1.0, shape=(48,), dtype=np.float32)
+
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-1.0, high=1.0, shape=(48,), dtype=np.float32)
 
-        self.FORMATION_VELOCITY = np.array([0.5, 0.5])
+        self.FORMATION_VELOCITY = np.array([40, 20])
         # try to make a triangle
         self.FORMATION_OFFSET = np.array([[0, 0], [20, 100], [100,50]])
 
@@ -35,9 +39,9 @@ class FormationEnv(gym.Env):
             ])
 
         self.Degree_matrix = np.array([
-            [1,0,0],
-            [0,1,0],
-            [0,0,1]
+            [2,0,0],
+            [0,2,0],
+            [0,0,2]
         ])
 
         #identity matrix
@@ -67,6 +71,7 @@ class FormationEnv(gym.Env):
             [0, 1]   # u_y affects dvy/dt
         ])
 
+        # fix the formation anchor point to a specific location in the environment
         self.formation_anchor = 0
         #simple double integrator where only consider postion and velocity
         #we want to make sure robot's dynmics are indenpendent from each other,
@@ -88,13 +93,14 @@ class FormationEnv(gym.Env):
         #     [-g₁, -g₂,  0,    0   ],
         #     [ 0,    0,  -g₁, -g₂ ]
         # ]
-        self.Gamma_1 = [
-            [-50.0, -30.0,  0.0,  0.0], #gain control feedback for x-driection
-            [  0.0,  0.0, -50.0, -30.0] #gain control feedback for y-driection
-        ]
+        # self.Gamma_1 = [
+        #     [-50.0, -30.0,  0.0,  0.0], #gain control feedback for x-driection
+        #     [  0.0,  0.0, -50.0, -30.0] #gain control feedback for y-driection
+        # ]
+        self.Gamma_1 = None
         # shape (2×4), controls x and y
 
-        self.Gamma = np.kron(np.eye(self.num_of_bots), self.Gamma_1)  # shape (6×12)
+        #self.Gamma = np.kron(np.eye(self.num_of_bots), self.Gamma_1)  # shape (6×12)
 
         self.current_step = 0
         self.target = None
@@ -111,44 +117,86 @@ class FormationEnv(gym.Env):
         self.tracking_error = None
         self.control_effort = None
 
+        self.gamma_history = []
+        self.formation_error_history = []
+
 
         # local stable test
-        eigvals = np.linalg.eigvals(self.L)
-        lambda_ = 1.5
-        A_cl = self.A0 + lambda_ * self.B0 @ self.Gamma_1
-        np.linalg.eigvals(A_cl)
+        # eigvals = np.linalg.eigvals(self.L)
+        # lambda_ = 1.5
+        # A_cl = self.A0 + lambda_ * self.B0 @ self.Gamma_1
+        # np.linalg.eigvals(A_cl)
         
-        print("Eigenvalues of A_cl:", np.linalg.eigvals(A_cl))
+        # print("Eigenvalues of A_cl:", np.linalg.eigvals(A_cl))
 
     def step(self, actions):
+
         self.current_step += 1
+        velocity = np.array([40, 20])
+        self.FORMATION_VELOCITY = velocity
+
+        self.robot_positions = np.array([r.state[[0, 2]] for r in self.robots])
+        self.robot_center = np.mean(self.robot_positions, axis=0)
+
+        robot_velocities = np.array([r.state[[1, 3]] for r in self.robots])
+        center_vel = np.mean(robot_velocities, axis=0)
+
+        Kp_track = 0.15
+        Kd_track = 0.7
+
+        u_track = (
+            Kp_track * (self.formation_anchor - self.robot_center)
+            + Kd_track * (self.FORMATION_VELOCITY - center_vel)
+        )
+
         for i in range(self.num_of_bots):
             # it will be [dx,dy] from [dx1, dy1, dx2, dy2, dx3, dy3]
-            self.robots[i].action = actions[2*i : 2*i+2]
+            # self.robots[i].action = actions[2*i : 2*i+2]
+            self.robots[i].action = actions
         # print(f"Robot actions:")
         # print(actions.reshape(3, 2))
 
+        raw_g1, raw_g2 = actions
 
-        self.formation_anchor = self.formation_anchor + self.FORMATION_VELOCITY
-        direction = self.target - self.formation_anchor
-        distance_to_target = np.linalg.norm(direction)
+        g1 = 1.0 * (raw_g1 + 1.0) / 2.0
+        g2 = 1.0 * (raw_g2 + 1.0) / 2.0
+
+        self.Gamma_1 = np.array([
+            [-g1, -g2,  0.0,  0.0], #gain control feedback for x-driection
+            [ 0.0,  0.0, -g1, -g2] #gain control feedback for y-driection
+        ])
+
+        self.Gamma = np.kron(np.eye(self.num_of_bots), self.Gamma_1)  # shape (6×12)
+
+        error = np.array([r.state for r in self.robots]).flatten() - self.desired_states.flatten()
+
+        rho = self.L1 @ error
+
+        r = self.Gamma @ rho
+
+        r = np.clip(r, -10.0, 10.0)
+
+        # print(f"self.Gamma_1: {self.Gamma_1}")
+
+        for i, robot in enumerate(self.robots):
+            r_i = r[2*i:2*i+2]
+            r_i += u_track
+
+            dq = self.A0 @ robot.state.reshape(4, 1) + self.B0 @ r_i.reshape(2, 1)
+            robot.state += dq.flatten() * self.dt
+            # print(f"dq for robot {i}: {dq.flatten() * self.dt}")
+
+        # r_i += FORMATION_VELOCITY
+        # dq = A0 @ self.state.reshape(4, 1) + B0 @ r_i.reshape(2, 1)
+        # self.state += dq.flatten() * DT
+
+
+        self.formation_anchor += self.FORMATION_VELOCITY * self.dt
+        # self.formation_anchor = [0,0]
+        # direction = self.target - self.formation_anchor
+        # distance_to_target = np.linalg.norm(direction)
 
         self.last_action = actions
-
-        # if distance_to_target > 5:  # only move if not yet at target
-        #     # velocity = direction / distance * 40  # control speed (tune 30)
-        #     velocity = direction / distance_to_target * 20  # control speed (tune 30)
-        # else:
-        #     velocity = np.array([0.0, 0.0])  # stop when close enough
-        velocity = np.array([0.2, 0.1])
-        self.FORMATION_VELOCITY = velocity
-
-        # 3x4 matrix for desired states
-
-        # self.desired_states = np.array([
-        # [self.formation_anchor[0] + offset[0], 0, self.formation_anchor[1] + offset[1], 0]
-        #     for offset in self.FORMATION_OFFSET
-        # ])
 
 
         self.desired_states = np.array([
@@ -159,31 +207,42 @@ class FormationEnv(gym.Env):
         old_states = np.array([r.state.copy() for r in self.robots])
         new_states = []
 
-        for i in range(self.num_of_bots):
-            Max_ACC = 10.0
-            u_i = actions[2*i:2*i+2] * Max_ACC
-            dq = self.A0 @ old_states[i].reshape(4, 1) + self.B0 @ u_i.reshape(2, 1)
-            next_state = old_states[i] + dq.flatten() * self.dt
-            self.robots[i].state = next_state
-            new_states.append(next_state)
+        # uniform control for direct rl control
+        # for i in range(self.num_of_bots):
+        #     Max_ACC = 10.0
+        #     u_i = actions[2*i:2*i+2] * Max_ACC
+        #     dq = self.A0 @ old_states[i].reshape(4, 1) + self.B0 @ u_i.reshape(2, 1)
+        #     next_state = old_states[i] + dq.flatten() * self.dt
+        #     self.robots[i].state = next_state
+        #     new_states.append(next_state)
 
         # self.robots = new_states
         done = False
+
+        #for evluation
+        self.max_steps = 10000
+        truncated = False
+        if self.current_step >= self.max_steps:
+            truncated = True
         # formation_error = np.linalg.norm(self.L1 @ error)
         # done = formation_error < threshold
         # calling get reward to any individual is fine since they have all info about others
         reward = self.get_reward()
+
+        self.gamma_history.append([g1, g2])
+        self.formation_error_history.append(self.formation_error)
         
         obs = self._get_observation()
         info = {}
 
         terminiated = False
-        truncated = (self.formation_error > 3 or self.tracking_error > 3)  # or any other condition for truncation
+        #for training
+        #truncated = (self.formation_error > 3 or self.tracking_error > 3)  # or any other condition for truncation
         return obs, reward, done, truncated, info
     
     def get_reward(self):
         w1 = 9.4
-        w2 = 0.3
+        w2 = 6.0
         w3 = 0.01
         # w1 = 4.7
         # w2 = 0.3
@@ -191,59 +250,22 @@ class FormationEnv(gym.Env):
         #dist_to_target = np.linalg.norm(self.formation_anchor - self.target)
 
         error = self.robots[0].get_obs(self.robots, self.desired_states)
-        robot_positions = np.array([r.state[[0, 2]] for r in self.robots])
-        robot_center = np.mean(robot_positions, axis=0) 
+        self.robot_positions = np.array([r.state[[0, 2]] for r in self.robots])
+        self.robot_center = np.mean(self.robot_positions, axis=0)
 
         self.formation_error = np.linalg.norm(self.L1 @ error) /1000.0
         self.tracking_error = np.linalg.norm(error) / 1000.0
         self.control_effort = np.linalg.norm(self.last_action) / 10.0 
 
-        # if self.prev_target_dist is None:
-        #     progress_reward = 0.0
-        # else:
-        #     progress_reward = self.prev_target_dist - dist_to_target
-
-        # progress_reward = np.clip(progress_reward, -0.05, 0.05)
-    
-        # robot_velocities = np.array([r.state[[1, 3]] for r in self.robots])
-        # center_velocity = np.mean(robot_velocities, axis=0)
-        # center_speed = np.linalg.norm(center_velocity)
-
-        # stop_penalty = 0.0
-        # if dist_to_target < 0.3:
-        #     stop_penalty = center_speed**2
 
         # self.prev_target_dist = dist_to_target
 
         # panaializing individual robot errors to see if we can get better reward design
         pos_errors = []
-        # for i, r in enumerate(self.robots):
-        #     pos_i = r.state[[0, 2]]
-        #     desired_pos_i = self.desired_states[i][[0, 2]]
-        #     pos_errors.append(np.linalg.norm(pos_i - desired_pos_i))
-
-        #     worst_robot_error = max(pos_errors) / 1000.0
-        #     avg_robot_error = np.mean(pos_errors) / 1000.0
-            
-        # base_reward = (-w1 * (formation_error)**2 - w2 * (tracking_error)**2
-        #                 - w3 * (control_effort)**2 + 20 * progress_reward -
-        #                   2 * stop_penalty     -0.5 * avg_robot_error**2
-        #                     -2.0 * worst_robot_error**2)    
 
         
         base_reward = (-w1 * (self.formation_error)**2  - w2 * (self.tracking_error)**2 - w3 * (self.control_effort)**2)    
         
-        # if dist_to_target < 0.1:
-        #     base_reward += 150  # Add a bonus for being close to the target
-        # elif dist_to_target < 0.3:
-        #     base_reward += 50   # Add a smaller bonus for being somewhat close to the target
-        # else:
-        #     base_reward += 0   # No bonus if the robot is far from the target
-        
-        # base_reward = (-w1 * (formation_error)**2 - w2 * (tracking_error)**2
-        #                 - w3 * (control_effort)**2 + 10* progress_reward) 
-
-        #base_reward = -w1 * (formation_error)**2 - w3 * (control_effort)**2
         tracking_improve = 0.0
         formation_improve = 0.0
         if self.prev_formation_error is not None:
@@ -284,19 +306,28 @@ class FormationEnv(gym.Env):
         # print("formation reward: ", formation_improve)
         # print("================================")
         # reward = base_reward
+        reward = float(np.clip(reward, -10.0, 5.0))
         
         return reward
     
     def reset(self, seed = None, options = None):
+        super().reset(seed=seed)
+        random.seed(seed)
+        self.gamma_history.clear()
+        self.formation_error_history.clear()
+
         self.robots = []
         self.current_step = 0
         self.prev_error = 0.0
 
+        self.prev_formation_error = None
+        self.prev_tracking_error = None
+
         for i in range(self.num_of_bots):
             # robot = base.Robot(i, (np.random.uniform(10, self.WIDTH - 100),   # random x within (10, 100)
             #                        np.random.uniform(10, self.HEIGHT - 100)))   # random y within bounds
-            robot = base.Robot(i, (np.random.uniform(800, 900),   # random x within (10, 100)
-                                   np.random.uniform(500, 600)))   # random y within bounds
+            robot = base.Robot(i, (np.random.uniform(400, 1100),   # random x within (10, 100)
+                                   np.random.uniform(200, 900)))   # random y within bounds
             # robot = base.Robot(i, (np.random.uniform(900, 950),   # random x within (10, 100)
             #                        np.random.uniform(600, 650)))   # random y within bounds
             robot.neighbor_indexs = np.where(self.A[i] == 1)[0].tolist()  # Get indices of neighbors from adjacency matrix
@@ -344,6 +375,8 @@ class FormationEnv(gym.Env):
         return obs
     
     def render(self):
+        if not self.render_mode:
+            return
         for r in self.robots:
             r.draw(self.screen)
         pygame.display.flip()

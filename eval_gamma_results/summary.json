@@ -1,0 +1,35 @@
+{
+  "model": "models/sac_gamma_9403001_VIIII/test_550k.zip",
+  "episodes": 20,
+  "max_steps": 20000,
+  "outcome_rules": {
+    "high_quality_success": "formation < 0.8 and tracking < 0.8",
+    "acceptable_success": "formation < 1.2 and tracking < 1.2",
+    "partial_success": "formation < 1.5 or tracking < 1.5",
+    "failure": "truncated/diverged, or none of the above"
+  },
+  "outcome_counts": {
+    "high_quality_success": 3,
+    "acceptable_success": 15,
+    "partial_success": 0,
+    "failure": 2
+  },
+  "outcome_rates": {
+    "high_quality_success": 0.15,
+    "acceptable_success": 0.75,
+    "partial_success": 0.0,
+    "failure": 0.1
+  },
+  "final_formation_error": {
+    "mean": 1.1358028827305202,
+    "std": 0.6342578140447412,
+    "min": 0.5937744128876666,
+    "max": 3.0002440630315506
+  },
+  "final_tracking_error": {
+    "mean": 0.37860096091017337,
+    "std": 0.21141927134824712,
+    "min": 0.19792480429588885,
+    "max": 1.0000813543438503
+  }
+}

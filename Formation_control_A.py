@@ -85,14 +85,17 @@ def run_sim():
     myenv = env.FormationEnv(screen)
     num_robots = myenv.num_of_bots    # leader_robot = robots[0]
 
+    
+
     # if you want to train from scratch, use the line below to create a new model. Otherwise, load a pre-trained model with the lines below that.
-    #model = DDPG("MlpPolicy", myenv,verbose=1, tensorboard_log="./DDPG_formation_env/")
+    #model = SAC("MlpPolicy", myenv,verbose=1, tensorboard_log="./SAC_formation_env/")
 
     # Load a pre-trained model (make sure to adjust the path and filename as needed), only one of the lines below should be uncommented at a time, depending on which model you want to load
-
+    model = SAC.load("models/sac_gamma_9403001_V/test_400k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = PPO.load("demo/no_target_ppo/test_4711_400k.zip",myenv, tensorboard_log="./sac_car_env/")
-    model = SAC.load("demo/no_target_sac/test_4711_400k.zip",myenv, tensorboard_log="./sac_car_env/")
+    #model = SAC.load("models/sac_gamma_9403001_VIIII/test_550k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = DDPG.load("demo/no_target_ddpg/test_4711_400k.zip",myenv, tensorboard_log="./DDPG_formation_env/")
+    #model = SAC.load("models/test_trace_4711_no_target_V/test_4711_350k.zip",myenv, tensorboard_log="./sac_car_env/")
 
     # train a model
 
@@ -100,9 +103,9 @@ def run_sim():
     # model.save(f"models/test_trace_4711/test_trace_4711_300k")
 
     # training in increments and saving intermediate models
-    # for i in range(1, 5):
-    #     model.learn(total_timesteps=100000, reset_num_timesteps=False)
-    #     model.save(f"models/no_target_ddpg/test_4711_{i*100}k")
+    # for i in range(13, 16):
+    #     model.learn(total_timesteps=50000, reset_num_timesteps=False)
+    #     model.save(f"models/sac_gamma_9403001_VIIII/test_{i*50}k")
     clock = pygame.time.Clock()
 
     # Main Loop
@@ -139,20 +142,28 @@ def run_sim():
         
         myenv.render()
         total_steps += 1  # Increment step count
-        if total_steps % 7000 == 0:
-            print("Training... at step ", total_steps)
-            obs, info = myenv.reset()
+        # if total_steps % 10000 == 0:
+        #     print("Training... at step ", total_steps)
+        #     obs, info = myenv.reset()
         if terminated:
             obs, _ = myenv.reset()
+
+    gamma_history = np.asarray(myenv.gamma_history, dtype=float)
+    formation_error_history = np.asarray(
+        myenv.formation_error_history,
+        dtype=float
+    )
+
     myenv.close()
-    return num_robots
-        
+
+    return num_robots, gamma_history, formation_error_history
+    
 
 if __name__ == "__main__":
     # Initialize Pygame and robots
     pygame.init()
     # creating robots with initial positions
-    num_robots = run_sim()
+    num_robots, gamma_history, formation_error_history = run_sim()
 
 
     pygame.quit()
@@ -212,4 +223,69 @@ if __name__ == "__main__":
         # plt.savefig("formation_y.png", dpi=160)
         # plt.close(fig2)
 
-    print("Plots saved: formation_x.png and formation_y.png")
+
+    # =========================================================
+    # Plot Gamma values
+    # =========================================================
+
+    if len(gamma_history) > 0:
+        steps = np.arange(len(gamma_history))
+
+        plt.figure(figsize=(10, 5))
+
+        plt.plot(
+            steps,
+            gamma_history[:, 0],
+            label="g1"
+        )
+
+        plt.plot(
+            steps,
+            gamma_history[:, 1],
+            label="g2"
+        )
+
+        plt.xlabel("Simulation Step")
+        plt.ylabel("Gamma Value")
+        plt.title("Gamma Values Over Time")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+
+        plt.savefig(
+            "gamma_history.png",
+            dpi=160
+        )
+
+        plt.show()
+
+
+    # =========================================================
+    # Plot formation error
+    # =========================================================
+
+    if len(formation_error_history) > 0:
+        steps = np.arange(len(formation_error_history))
+
+        plt.figure(figsize=(10, 5))
+
+        plt.plot(
+            steps,
+            formation_error_history,
+            label="Formation Error"
+        )
+
+        plt.xlabel("Simulation Step")
+        plt.ylabel("Formation Error")
+        plt.title("Formation Error Over Time")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+
+        plt.savefig(
+            "formation_error_history.png",
+            dpi=160
+        )
+
+        plt.show()
+        print("Plots saved: formation_x.png and formation_y.png")
