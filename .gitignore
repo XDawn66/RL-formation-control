@@ -3,3 +3,11 @@
 
 # Ignore all CSV files
 *.csv
+
+DDPG_formation_env/
+
+PPO_formation_env/
+
+sac_car_env/
+
+sac_formation_env/
