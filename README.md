@@ -128,15 +128,15 @@ These results motivated the structured gain-learning approach.
 
 ### SAC
 
-![SAC trajectory](plots/SAC_robot_trajectories_with_anchor.png)
+![SAC trajectory](plots/Phase1_plots/SAC_robot_trajectories_with_anchor.png)
 
 ### PPO
 
-![PPO trajectory](plots/PPO_robot_trajectories_with_anchor.png)
+![PPO trajectory](plots/Phase1_plots/PPO_robot_trajectories_with_anchor.png)
 
 ### DDPG
 
-![DDPG trajectory](plots/DDPG_robot_trajectories_with_anchor.png)
+![DDPG trajectory](plots/Phase1_plots/DDPG_robot_trajectories_with_anchor.png)
 
 ---
 
@@ -294,6 +294,8 @@ Stable formation behavior has been observed in evaluation rollouts with up to **
 Larger teams also showed that longer rollout horizons can be necessary before convergence becomes clear.
 
 ---
+
+## Example Direct-Action Results
 
 ## 20-Robot Results
 
