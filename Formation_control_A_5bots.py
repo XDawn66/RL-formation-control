@@ -9,6 +9,7 @@ from stable_baselines3 import SAC
 from stable_baselines3 import PPO
 from stable_baselines3 import DDPG
 # Simulation Parameters
+from transformer_extractor import RobotTransformerExtractor
 
 hist = {"t": [], "x": [], "y": [], "anchor_x": [], "anchor_y": []}
 # Create a DataFrame to store the history of robot positions
@@ -25,44 +26,6 @@ class Robot:
         self.y_speed = self.state[3]
         self.action = [0,0]
         self.neighbor_indexs = []
-
-    # def update(self, neighbors, desired_states):
-        # Build q (stack of all robot states, each 1x4), will get 3x4 matrix
-        # q_all = np.array([r.state for r in neighbors])
-
-        # Flatten q_all and desired_states for the full multi-robot state and desired state
-        # q_all is now a 12x1 vector (3 robots, each with 4 states)
-        # error = q_all.flatten() - desired_states.flatten()
-
-        # Apply Laplacian to error
-        # rho = L1 @ error
-
-        # # the control law for all robots
-        # r = Gamma @ rho
-
-        # Feedforward + anchor tracking
-        # r_i = r[self.idx * 2 : self.idx * 2 + 2]
-        # r_i += FORMATION_VELOCITY  # Add anchor's desired velocity
-
-        # LEADER_IDX = 1 #optional leader role
-        # if (self.idx == LEADER_IDX):  # If this is the second robot
-        #     # Add global error correction toward desired position
-        #     Kp_global = 5.0
-        #     pos = self.state[[0, 2]]  # current (x, y)
-        #     desired_pos = desired_states[self.idx][[0, 2]]
-        # #print(f"before adding global error correction: r_i={r_i}, desired_pos={desired_pos}, pos={pos}")
-        #     r_i += Kp_global * (desired_pos - pos)
-        # #print(f"after adding global error correction: r_i={r_i}")
-
-        # # Kd_damping = 5  # Tune this value to reduce overshoot
-        # # velocity = self.state[[1, 3]]  # (vx, vy)
-        # # r_i -= Kd_damping * velocity
-
-        # r_i = self.action
-        # r_i += FORMATION_VELOCITY
-        # dq = A0 @ self.state.reshape(4, 1) + B0 @ r_i.reshape(2, 1)
-        # self.state += dq.flatten() * DT
-        #print(f"Robot {self.idx} -  ri: {dq.flatten() * DT}")
 
     def get_obs(self, neighbors, desired_states):
         q_all = np.array([r.state for r in neighbors])
@@ -85,13 +48,31 @@ def run_sim():
     myenv = env.FormationEnv(screen)
     num_robots = myenv.num_of_bots    # leader_robot = robots[0]
 
+    policy_kwargs = dict(
+    features_extractor_class=RobotTransformerExtractor,
+    features_extractor_kwargs=dict(
+        features_dim=64,
+        d_model=64,
+        nhead=4,
+        num_layers=2
+    ),
+    net_arch=[128, 128]
+)
+
+
     # if you want to train from scratch, use the line below to create a new model. Otherwise, load a pre-trained model with the lines below that.
-    #model = SAC("MlpPolicy", myenv,verbose=1, tensorboard_log="./SAC_formation_env/")
+    model = SAC(
+    "MlpPolicy",
+    myenv,
+    policy_kwargs=policy_kwargs,    # <-- THIS is where you use it
+    verbose=1,
+    tensorboard_log="./SAC_formation_env/"
+)
 
     # Load a pre-trained model (make sure to adjust the path and filename as needed), only one of the lines below should be uncommented at a time, depending on which model you want to load
 
     #model = PPO.load("demo/no_target_ppo/test_4711_400k.zip",myenv, tensorboard_log="./sac_car_env/")
-    model = SAC.load("models/sac_gamma_5bots_XII/test_550k.zip",myenv, tensorboard_log="./sac_car_env/")
+    model = SAC.load("models/sac_gamma_5bots_tran_II/test_125k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = SAC.load("models/sac_gamma_5bots_III/test_250k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = DDPG.load("demo/no_target_ddpg/test_4711_400k.zip",myenv, tensorboard_log="./DDPG_formation_env/")
 
@@ -101,15 +82,22 @@ def run_sim():
     # model.save(f"models/test_trace_4711/test_trace_4711_300k")
 
     # training in increments and saving intermediate models
-    # for i in range(12,15):
-    #     model.learn(total_timesteps=50000, reset_num_timesteps=False)
-    #     model.save(f"models/sac_gamma_5bots_XII/test_{i*50}k")
+    # for i in range(1,10):
+    #     model.learn(total_timesteps=25000, reset_num_timesteps=False)
+    #     model.save(f"models/sac_gamma_5bots_tran_II/test_{i*25}k")
     # clock = pygame.time.Clock()
 
     # Main Loop
     running = True
     # reset env before start
     obs, info = myenv.reset()
+
+    # print("Environment obs shape:", obs.shape)
+    # print(model.policy)
+
+    # print(obs.shape)
+    # print(obs[:5])
+    # print(obs[5:])
 
     while running:
         elaspsed_time = pygame.time.get_ticks() / 1000.0  # Get elapsed time in seconds
@@ -136,6 +124,8 @@ def run_sim():
 
         info = pygame.display.Info()
         action, _states = model.predict(obs, deterministic = True)
+        # print("action:", action)
+        # print("action shape:", action.shape)
         obs, reward, terminated, end, info = myenv.step(action)
         
         myenv.render()
@@ -145,6 +135,8 @@ def run_sim():
             obs, info = myenv.reset()
         if terminated:
             obs, _ = myenv.reset()
+
+    
             
     # return num_robots
     gamma_history = np.asarray(myenv.gamma_history, dtype=float)

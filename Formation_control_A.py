@@ -91,7 +91,7 @@ def run_sim():
     #model = SAC("MlpPolicy", myenv,verbose=1, tensorboard_log="./SAC_formation_env/")
 
     # Load a pre-trained model (make sure to adjust the path and filename as needed), only one of the lines below should be uncommented at a time, depending on which model you want to load
-    model = SAC.load("models/sac_gamma_9403001_V/test_400k.zip",myenv, tensorboard_log="./sac_car_env/")
+    #model = SAC.load("models/sac_gamma_9403001_V/test_400k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = PPO.load("demo/no_target_ppo/test_4711_400k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = SAC.load("models/sac_gamma_9403001_VIIII/test_550k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = DDPG.load("demo/no_target_ddpg/test_4711_400k.zip",myenv, tensorboard_log="./DDPG_formation_env/")

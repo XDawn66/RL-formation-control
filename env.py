@@ -17,7 +17,8 @@ class FormationEnv(gym.Env):
         self.robots = []
         # self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2* self.num_of_bots,), dtype=np.float32)
         # self.observation_space = spaces.Box(low=-1.0, high=1.0, shape=(48,), dtype=np.float32)
-
+        
+        # maybe need to change here 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-1.0, high=1.0, shape=(48,), dtype=np.float32)
 

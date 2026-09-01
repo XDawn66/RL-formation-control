@@ -14,10 +14,10 @@ import numpy as np
 import pygame
 from stable_baselines3 import SAC
 
-import env
+import env_7bots as env
 
 
-DEFAULT_MODEL = "models/sac_gamma_9403001_VIIII/test_550k.zip"
+DEFAULT_MODEL = "models/sac_gamma_7bots_tran_I/test_100k.zip"
 
 
 def classify_result(result):
@@ -227,7 +227,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate the current 3-robot Gamma SAC model.")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Path to SAC .zip checkpoint.")
     parser.add_argument("--episodes", type=int, default=20, help="Number of random starts.")
-    parser.add_argument("--max-steps", type=int, default=2000, help="Maximum rollout steps per start.")
+    parser.add_argument("--max-steps", type=int, default=10000, help="Maximum rollout steps per start.")
     parser.add_argument("--seed", type=int, default=0, help="Base random seed.")
     parser.add_argument("--output-dir", default="eval_gamma_results")
     parser.add_argument("--verbose-env", action="store_true", help="Show env reward prints.")

@@ -12,8 +12,11 @@ class FormationEnv(gym.Env):
         self.screen = screen
         self.dt = 0.005
 
-        self.num_of_bots = 5
         self.robots = []
+        self.num_of_bots = 5
+
+        self.max_robots = 20
+        self.robot_feature_dim = 4
         
         # self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2* self.num_of_bots,), dtype=np.float32)
         # self.observation_space = spaces.Box(low=-1.0, high=1.0, shape=(48,), dtype=np.float32)
@@ -22,7 +25,7 @@ class FormationEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(80,),  # 5 robots * (4 states + 4 errors + 4 neighbors * 4 states) = 5 * (4 + 4 + 16) = 5 * 24 = 120, but we have only 5 robots and each has 4 states and 4 errors, plus neighbor info   
+            shape=(self.max_robots, self.robot_feature_dim),  # 5 robots * (4 states + 4 errors + 4 neighbors * 4 states) = 5 * (4 + 4 + 16) = 5 * 24 = 120, but we have only 5 robots and each has 4 states and 4 errors, plus neighbor info   
             dtype=np.float32,
         )
 
@@ -59,7 +62,8 @@ class FormationEnv(gym.Env):
         self.I = np.eye(5)
 
         # Laplacian matrix 5x5
-        self.L = self.I - self.Degree_matrix @ self.A
+        D_inv = np.linalg.inv(self.Degree_matrix)
+        self.L = self.I - D_inv @ self.A
         print("Laplacian Matrix L:\n", self.L)
 
         self.I_m = np.eye(5)
@@ -147,6 +151,7 @@ class FormationEnv(gym.Env):
         # print("Eigenvalues of A_cl:", np.linalg.eigvals(A_cl))
         self.gamma_history = []
         self.formation_error_history = []
+        self.stable_steps = 0
 
     def step(self, actions):
 
@@ -292,6 +297,90 @@ class FormationEnv(gym.Env):
             "failure": failure,
         }
 
+        if self.current_step % 1000 == 0:
+            print(
+                "step:", self.current_step,
+                "raw action:", actions,
+                "g1:", g1,
+                "g2:", g2
+            )
+            print("formation_error", self.formation_error, "tracking_error", self.tracking_error)
+
+        if self.current_step % 1000 == 0:
+            print("================================")
+            print("step:", self.current_step)
+
+            print(
+                "center-anchor distance:",
+                np.linalg.norm(
+                    self.robot_center - np.mean(
+                        np.array([s[[0, 2]] for s in self.desired_states]),
+                        axis=0
+                    )
+                )
+            )
+
+            desired_positions = np.array([
+                s[[0, 2]]
+                for s in self.desired_states
+            ])
+
+            desired_center = np.mean(
+                desired_positions,
+                axis=0
+            )
+
+            center_tracking_error = np.linalg.norm(
+                self.robot_center - desired_center
+            )
+
+            print(
+                "u_track magnitude:",
+                np.linalg.norm(u_track)
+            )
+
+            print(
+                "consensus magnitude:",
+                np.linalg.norm(r)
+            )
+
+            print(
+                "formation error:",
+                self.formation_error
+            )
+
+            print(
+                "tracking error:",
+                self.tracking_error
+            )
+
+            print("g1:", g1, "g2:", g2)
+
+        if self.current_step % 1000 == 0:
+
+            print("Individual position errors:")
+
+            for i, robot in enumerate(self.robots):
+                pos = robot.state[[0, 2]]
+                desired_pos = self.desired_states[i][[0, 2]]
+
+                print(
+                    i,
+                    np.linalg.norm(pos - desired_pos)
+                )
+
+            print(
+                "desired-center tracking:",
+                center_tracking_error
+            )
+
+            print(
+                "consensus effort:",
+                np.linalg.norm(r)
+            )
+
+                    
+
         return obs, reward, terminated, truncated, info
     
     def get_reward(self):
@@ -302,6 +391,7 @@ class FormationEnv(gym.Env):
         # w2 = 0.3
         # w3 = 0.01
         #dist_to_target = np.linalg.norm(self.formation_anchor - self.target)
+
 
         desired_positions = np.array([s[[0, 2]] for s in self.desired_states])
         desired_center = np.mean(desired_positions, axis=0)
@@ -420,34 +510,41 @@ class FormationEnv(gym.Env):
         return obs, info
 
     def _get_observation(self):
-        q_all = np.array([r.state for r in self.robots])
         
         self.desired_states = np.array([
         [self.formation_anchor[0] + offset[0], self.FORMATION_VELOCITY[0], self.formation_anchor[1] + offset[1], self.FORMATION_VELOCITY[1]]
             for offset in self.FORMATION_OFFSET
         ])
         
-        obs = []
+        
+        obs = np.zeros(
+            (self.max_robots, self.robot_feature_dim),
+            dtype=np.float32
+        )
+
         for i in range(self.num_of_bots):
             own_state = self.robots[i].state
             own_error = own_state - self.desired_states[i]
-            neighbor_info = []
-            for j in self.robots[i].neighbor_indexs:
-                neighbor_error = self.robots[j].state - self.desired_states[j]
-                # Here you can compute any additional features based on neighbor states and desired states
-                relative_error = own_error - neighbor_error
-                neighbor_info.append(relative_error)  # Add relative error to neighbor info
 
-            if len(neighbor_info) > 0:
-                neighbor_info = np.concatenate(neighbor_info)
-            else:
-                neighbor_info = np.zeros(4 * len(self.robots[i].neighbor_indexs))  # No neighbors, so fill with zeros
+            x_normalize = 100.0
+            y_normalize = 50.0
+
+            obs[i] = np.array([
+            own_error[0] / x_normalize,  # x position error
+            own_error[1] / y_normalize,   # x velocity error
+            own_error[2] / x_normalize,  # y position error
+            own_error[3] / y_normalize    # y velocity error
+            ], dtype=np.float32)
+            # if len(neighbor_info) > 0:
+            #     neighbor_info = np.concatenate(neighbor_info)
+            # else:
+            #     neighbor_info = np.zeros(4 * len(self.robots[i].neighbor_indexs))  # No neighbors, so fill with zeros
             
-            robot_obs = np.concatenate([own_state, own_error, neighbor_info])
+            # robot_obs = np.concatenate([own_state, own_error, neighbor_info])
 
-            obs.append(robot_obs)   
+            # obs.append(robot_token)
 
-        obs = np.concatenate(obs).astype(np.float32)
+        # obs = np.concatenate(obs).astype(np.float32)
         # print("obs shape:", obs.shape)
         return obs
     
