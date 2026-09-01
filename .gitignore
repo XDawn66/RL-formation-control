@@ -11,3 +11,5 @@ PPO_formation_env/
 sac_car_env/
 
 sac_formation_env/
+
+__pycache__
