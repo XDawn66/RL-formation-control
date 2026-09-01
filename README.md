@@ -1,85 +1,97 @@
-# Reinforcement Learning for Multi-Robot Formation Control
+# Reinforcement Learning for Scalable Multi-Robot Formation Control
 
-This project explores reinforcement learning methods for multi-robot formation control. The goal is to investigate whether model-free RL policies can learn stable formation behavior for multiple robots under a desired formation trajectory, and to compare direct-action RL methods with more structured controller-based approaches.
+This project investigates reinforcement learning for multi-robot formation control by combining model-free RL with a structured graph-based formation controller.
+
+Rather than asking the RL policy to directly output every robot's acceleration, the current approach preserves the consensus-control structure and uses Soft Actor-Critic (SAC) to adapt only two shared controller gains.
+
+The current architecture has been evaluated in simulation with teams ranging from small formations up to **20 robots**.
 
 ## Demo Video
 
-Watch the demo here:
+Original project demo:
 
 https://youtu.be/FptJdGw1jp8
 
+> The current structured gain-learning and large-team experiments extend beyond the version shown in the original demo.
+
+---
+
 ## Project Overview
 
-The system consists of multiple robots modeled with simplified double-integrator dynamics:
+Each robot is modeled as a 2D double-integrator system:
 
 ```text
-state_i = [x_i, vx_i, y_i, vy_i]
-action_i = [u_xi, u_yi]
+q_i = [x_i, vx_i, y_i, vy_i]
+u_i = [u_xi, u_yi]
 ```
 
-The robots are expected to maintain a desired formation defined by formation offsets while following a reference anchor moving at constant velocity.
-
-The desired state for each robot is defined as:
+Each robot follows a desired state defined by a moving formation anchor and a robot-specific formation offset:
 
 ```text
-desired_state_i = [
+q_i* = [
     anchor_x + offset_xi,
-    anchor_vx,
+    desired_vx,
     anchor_y + offset_yi,
-    anchor_vy
+    desired_vy
 ]
 ```
 
-The formation error is computed using a graph Laplacian-based structure inspired by classical multi-agent formation control.
+The robots must maintain their desired relative formation while tracking a moving reference.
+
+---
 
 ## Motivation
 
-Classical formation controllers often use structured control laws such as:
+A classical consensus-style formation controller can be written as:
 
 ```text
-u = Γ L(q - h)
+rho = (L ⊗ I)(q - q*)
+u = Γ rho
 ```
 
 where:
 
 - `q` is the stacked robot state
-- `h` is the desired formation offset
-- `L` is the graph Laplacian
-- `Γ` is a controller gain matrix
+- `q*` is the stacked desired state
+- `L` is the normalized graph Laplacian
+- `rho` is the graph-based relative formation error
+- `Γ` is the controller gain matrix
 
-This project first tests whether direct RL can learn the full control policy:
+The first stage of this project tested direct end-to-end RL:
 
 ```text
 u = π(obs)
 ```
 
-Then, based on the limitations of direct policy learning, the next phase investigates structured RL approaches where learning is used to tune controller parameters such as `Γ`.
+In this setup, the policy must learn both inter-agent coordination and low-level control.
 
-## Methods Tested
+The second stage instead preserves the structured controller and lets RL adapt only a small set of controller gains.
 
-### Direct-Action RL Baselines
+---
 
-The following direct-action RL algorithms were tested:
+## Phase 1: Direct-Action RL
+
+The following direct-action algorithms were tested:
 
 - SAC
 - PPO
 - DDPG
 
-In these baselines, the policy directly outputs the acceleration commands for all robots:
+For a three-robot system, the policy directly outputs:
 
 ```text
-action = [u_x1, u_y1, u_x2, u_y2, u_x3, u_y3]
+action = [
+    u_x1, u_y1,
+    u_x2, u_y2,
+    u_x3, u_y3
+]
 ```
+
+The learned action dimension therefore grows with the number of robots.
 
 ### Reward Design
 
-The reward function penalizes:
-
-- formation error
-- tracking error
-- control effort
-
-Example reward:
+The reward penalizes formation error, tracking error, and control effort:
 
 ```python
 reward = (
@@ -89,99 +101,307 @@ reward = (
 )
 ```
 
-where:
-
-```python
-formation_error = ||L1 @ error||
-tracking_error = ||q - q_desired||
-control_effort = ||action||
-```
-
-## Key Findings
-
-Direct-action RL methods showed partial formation behavior, but were difficult to train reliably.
-
-Observed limitations:
-
-- SAC could learn partial formation behavior, but often failed to maintain it over time.
-- PPO produced more conservative motion and sometimes kept agents closer together, but struggled to track the moving reference.
-- DDPG produced the strongest partial result in some trials, but one robot often failed to keep up with the others.
-- All methods were sensitive to reward weights, initialization, checkpoint selection, and reference motion.
-
-These results suggest that direct-action RL must learn both:
-
-1. the coordination structure between robots
-2. the low-level control law
-
-This makes the learning problem difficult and unstable.
-
-## Example Results
-
-Figures below show example robot trajectories from direct-action RL baselines.
+Core metrics include:
 
 ```text
-SAC: partial formation, unstable over time
-PPO: more conservative but weak reference tracking
-DDPG: two agents coordinate, one agent diverges
+formation_error = ||(L ⊗ I)(q - q*)||
+tracking_error  = ||q - q*||
+control_effort  = ||u||
 ```
 
-Generated trajectory plots are saved as:
+### Findings
 
-```text
-robot_trajectories_with_anchor.png
-formation_x.png
-formation_y.png
-```
+Direct-action RL could produce partial formation behavior, but training was sensitive and difficult to stabilize.
 
-Example image links:
+Observed behavior included:
 
-```markdown
+- SAC learning temporary formation behavior but sometimes losing it over longer rollouts
+- PPO producing conservative motion but weaker reference tracking
+- DDPG producing strong partial coordination in some runs while individual robots could still diverge
+- strong sensitivity to reward weights, initialization, checkpoints, and reference motion
+
+These results motivated the structured gain-learning approach.
+
+---
+
+## Example Direct-Action Results
+
+### SAC
+
 ![SAC trajectory](plots/SAC_robot_trajectories_with_anchor.png)
+
+### PPO
+
 ![PPO trajectory](plots/PPO_robot_trajectories_with_anchor.png)
+
+### DDPG
+
 ![DDPG trajectory](plots/DDPG_robot_trajectories_with_anchor.png)
-```
 
-## Next Step: Structured Gain Learning
+---
 
-Based on the limitations of direct-action RL, the next phase will preserve the classical controller structure:
+## Phase 2: Structured Gain Learning
 
-```text
-u = Γ L(q - h)
-```
+The current approach preserves the graph-based formation controller and allows SAC to adapt only two shared gains.
 
-Instead of allowing the policy to directly output all robot actions, RL will be used to learn or tune the gain matrix `Γ`.
-
-A simple parameterization is:
+For each robot, the gain matrix is parameterized as:
 
 ```text
-Γ = [
-    [-kp, -kd,   0,   0],
-    [  0,   0, -kp, -kd]
+Γ_i = [
+    [-g1, -g2,   0,   0],
+    [  0,   0, -g1, -g2]
 ]
 ```
 
-The learning problem can then be reduced to finding suitable gains:
+where:
+
+- `g1` controls position-related feedback
+- `g2` controls velocity-related feedback
+
+Instead of outputting all robot control actions, SAC outputs only:
 
 ```text
-[kp, kd]
+[g1, g2]
 ```
 
-This structured approach may reduce the learning burden and improve stability, interpretability, and generalization.
+These gains are inserted into the structured controller:
+
+```text
+rho = (L ⊗ I)(q - q*)
+u_consensus = Γ rho
+```
+
+A separate global tracking controller moves the center of the formation with the reference trajectory.
+
+This reduces the learned action space from:
+
+```text
+2N robot control actions
+```
+
+to:
+
+```text
+2 adaptive gains
+```
+
+regardless of the number of robots.
+
+---
+
+## Variable-Size Robot Representation
+
+To support larger teams, each robot is represented as a token containing normalized relative-state errors:
+
+```text
+robot_i = [
+    position_error_x,
+    velocity_error_x,
+    position_error_y,
+    velocity_error_y
+]
+```
+
+The robot tokens are processed by a Transformer encoder:
+
+```text
+robot tokens
+     ↓
+linear embedding
+     ↓
+Transformer encoder
+     ↓
+masked mean pooling
+     ↓
+fixed-size latent representation
+     ↓
+SAC actor / critic
+     ↓
+[g1, g2]
+```
+
+Padding and masking allow the same architecture to process different numbers of active robots up to a configured maximum.
+
+The current implementation supports up to **20 robot tokens**.
+
+---
+
+## Controller Architecture
+
+```text
+global robot-error observations
+            ↓
+       Transformer
+            ↓
+            SAC
+            ↓
+      shared g1, g2
+            ↓
+structured graph-based consensus controller
+            ↓
+      robot accelerations
+```
+
+The learned gain-selection policy is currently **centralized**, because the Transformer observes all active robot tokens.
+
+The consensus-control execution itself remains graph structured through the Laplacian.
+
+A useful description of the current architecture is:
+
+> **Centralized adaptive gain selection with distributed graph-structured control execution.**
+
+---
+
+## Graph Laplacian
+
+The controller uses the normalized graph Laplacian:
+
+```text
+L = I - D^-1 A
+```
+
+where:
+
+- `A` is the adjacency matrix
+- `D` is the degree matrix
+
+For the current degree-2 ring topology:
+
+```text
+L[i, i]       = 1
+L[i, i - 1]   = -0.5
+L[i, i + 1]   = -0.5
+```
+
+with wrap-around connections between the first and last robots.
+
+Correct implementation of the normalized Laplacian was important for scaling beyond the original small-team experiments.
+
+---
+
+## Scalability Experiments
+
+The structured approach has been evaluated with:
+
+```text
+3 → 5 → 7 → 10 → 15 → 20 robots
+```
+
+The same general SAC + Transformer + structured-controller architecture was retained as the team size increased.
+
+Stable formation behavior has been observed in evaluation rollouts with up to **20 robots**.
+
+Larger teams also showed that longer rollout horizons can be necessary before convergence becomes clear.
+
+---
+
+## 20-Robot Results
+
+The 20-robot experiments demonstrate that the structured controller can achieve low formation and tracking errors while keeping the learned action dimension fixed at two.
+
+Representative late-stage results include:
+
+```text
+formation error < 0.001
+tracking error  ≈ 0.01 - 0.03
+```
+
+with small individual robot position errors.
+
+Checkpoint performance was not monotonic:
+
+```text
+50k   → unstable / oscillatory
+75k   → strong convergence
+100k  → strong and relatively fast convergence
+125k  → degraded behavior
+150k  → more variable gain adaptation
+175k  → strong convergence again
+200k  → strong convergence
+```
+
+This suggests that continued SAC training can move the policy between different useful and less-useful regions of the controller-gain space.
+
+These checkpoint results are empirical simulation observations and are not presented as a formal stability guarantee.
+
+---
+
+## Learned Gain Behavior
+
+Different successful checkpoints converged to different gain regimes, for example:
+
+```text
+g1 ≈ 0.97, g2 ≈ 0.97
+g1 ≈ 0.94, g2 ≈ 0.89
+g1 ≈ 0.87, g2 ≈ 0.91
+g1 ≈ 0.94, g2 ≈ 0.92
+```
+
+Multiple gain regions can therefore produce strong formation-control behavior.
+
+Some degraded checkpoints instead show large switching between low-gain and high-gain regimes.
+
+This suggests that the learned policy behaves more like an adaptive gain-selection mechanism than a search for one unique fixed gain pair.
+
+---
+
+## Key Findings
+
+- Direct-action RL is difficult because the policy must learn both coordination and low-level control.
+- Preserving a classical consensus structure reduces the dimensionality of the RL control problem.
+- SAC can learn adaptive controller gains instead of directly controlling every robot.
+- The learned action dimension remains fixed at two as team size increases.
+- Transformer-based robot-token encoding provides a convenient representation for variable-size teams.
+- Stable simulation rollouts have been demonstrated with up to 20 robots.
+- SAC checkpoint performance is not monotonic with training duration.
+- Multiple gain regimes can produce strong control behavior.
+- Larger teams may require longer evaluation horizons before convergence becomes visible.
+
+---
+
+## Current Limitations
+
+- The Transformer observes global robot information, so learned gain selection is centralized.
+- A single shared pair of gains `[g1, g2]` is used for all robots.
+- The robot dynamics are simplified double-integrator models.
+- Most scalability experiments use a ring communication topology.
+- Robustness to robot failures and communication loss has not yet been systematically evaluated.
+- The learned policy does not currently provide a formal stability guarantee.
+- More systematic multi-seed evaluation is still needed for stronger statistical claims.
+
+---
+
+## Future Work
+
+- Transformer ablation
+- comparison with simpler pooled or MLP-based encoders
+- neighborhood-only gain selection
+- decentralized per-robot gain prediction
+- robot failure and communication-loss experiments
+- different graph topologies
+- disturbances and more complex reference trajectories
+- systematic multi-seed evaluation
+- convergence-time analysis as team size increases
+
+---
 
 ## Project Structure
 
 ```text
 RL-formation-control/
 │
-├── Formation_control_A.py     # Main simulation / evaluation script
-├── env.py                     # Gymnasium environment
-├── README.md                  # Project description
-├── requirements.txt           # Python dependencies
+├── Formation_control_A.py
+├── env.py
+├── README.md
+├── requirements.txt
 │
-├── models/                    # Trained model checkpoints, ignored by git
-├── plots/                     # Generated figures
-└── logs/                      # TensorBoard logs
+├── models/
+├── demo/
+├── plots/
+└── logs/
 ```
+
+---
 
 ## Installation
 
@@ -195,37 +415,39 @@ conda activate rl-formation
 Install dependencies:
 
 ```bash
-pip install numpy pygame matplotlib pandas gymnasium stable-baselines3
+pip install numpy pygame matplotlib pandas gymnasium stable-baselines3 torch
 ```
+
+---
 
 ## Running the Simulation
 
-To run the simulation:
+Run the main simulation:
 
 ```bash
 python Formation_control_A.py
 ```
 
-To train a model, uncomment the training section in `Formation_control_A.py`:
+Example SAC training:
 
 ```python
 model.learn(total_timesteps=100000)
 model.save("models/example_model")
 ```
 
-To load a saved model:
+Example model loading:
 
 ```python
 model = SAC.load("models/example_model", env=myenv)
 ```
 
+---
+
 ## Notes on Trained Models
 
 Trained model checkpoints are not included in the repository because they can be large and frequently change.
 
-The `models/` directory is ignored by Git.
-
-Example `.gitignore` entry:
+Example `.gitignore` entries:
 
 ```gitignore
 models/
@@ -235,25 +457,37 @@ ppo_formation_env/
 DDPG_formation_env/
 __pycache__/
 *.pyc
-*.png
 ```
+
+---
 
 ## Current Status
 
-- Classical linear formation simulator implemented.
-- Gymnasium environment implemented.
-- SAC, PPO, and DDPG direct-action baselines tested.
-- Direct-action RL shown to be unstable and sensitive.
-- Next phase: structured RL for learning/tuning `Γ`.
+- [x] Classical graph-based formation simulator
+- [x] Gymnasium environment
+- [x] SAC direct-action baseline
+- [x] PPO direct-action baseline
+- [x] DDPG direct-action baseline
+- [x] Structured SAC gain-learning controller
+- [x] Transformer robot-token encoder
+- [x] Variable-team observation masking
+- [x] Correct normalized graph Laplacian
+- [x] Scaling experiments through 20 robots
+- [ ] Systematic multi-seed benchmark
+- [ ] Transformer ablation
+- [ ] Decentralized gain-selection policy
+- [ ] Fault-tolerance experiments
 
-## Future Work
-
-- Implement structured gain-learning controller.
-- Compare direct-action RL vs structured RL.
-- Evaluate convergence speed, robustness, and scalability.
-- Test different communication graphs.
-- Extend from fixed/constant-velocity reference to more complex reference trajectories.
+---
 
 ## Author
 
 Zhenyu Jiang
+
+---
+
+## Use of AI Tools
+
+AI tools, including ChatGPT, were used as research and development aids for brainstorming, debugging discussions, code review, technical explanations, and documentation.
+
+The author implemented and executed the simulation and training pipeline, conducted the experiments, evaluated the resulting policies, and verified the reported results. AI-assisted suggestions were reviewed and tested before being incorporated into the project.
