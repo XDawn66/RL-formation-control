@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import env_5bots as env
 
 from gymnasium import spaces
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -12,12 +13,15 @@ class RobotTransformerExtractor(BaseFeaturesExtractor):
         features_dim=64,
         d_model=64,
         nhead=4,
-        num_layers=2
+        num_layers=2,
+        num_active_robots= None
     ):
         super().__init__(
             observation_space,
             features_dim=features_dim
         )
+
+        self.num_active_robots = num_active_robots
 
         # observation shape should be:
         # (max_robots, robot_feature_dim)
@@ -63,15 +67,17 @@ class RobotTransformerExtractor(BaseFeaturesExtractor):
         # 1. Identify padded robots
         # ------------------------------------------------
 
-        # Robot is padded if ALL 8 values are zero
-        active_mask = torch.any(
-            observations != 0,
-            dim=-1
+        batch_size, num_tokens, _ = observations.shape
+
+        active_mask = torch.zeros(
+            (batch_size, num_tokens),
+            dtype=torch.bool,
+            device=observations.device
         )
 
-        # Transformer expects True = IGNORE token
-        padding_mask = ~active_mask
+        active_mask[:, :self.num_active_robots] = True
 
+        padding_mask = ~active_mask
         # ------------------------------------------------
         # 2. Embed each robot token
         # ------------------------------------------------

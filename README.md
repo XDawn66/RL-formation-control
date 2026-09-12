@@ -297,6 +297,18 @@ Larger teams also showed that longer rollout horizons can be necessary before co
 
 ## Example Direct-Action Results
 
+### 5 bots formation
+
+![SAC trajectory](plots/Phase2_plots/5robots_best.png)
+
+### 10 bots formation
+
+![10bots trajectory](plots/Phase2_plots/10bot.png)
+
+### 20 bots formation
+
+![10bots trajectory](plots/Phase2_plots/20bots.png)
+
 ## 20-Robot Results
 
 The 20-robot experiments demonstrate that the structured controller can achieve low formation and tracking errors while keeping the learned action dimension fixed at two.

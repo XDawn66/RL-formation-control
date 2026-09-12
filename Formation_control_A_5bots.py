@@ -26,6 +26,8 @@ class Robot:
         self.y_speed = self.state[3]
         self.action = [0,0]
         self.neighbor_indexs = []
+        self.mode = 0  # Default mode for the robot
+
 
     def get_obs(self, neighbors, desired_states):
         q_all = np.array([r.state for r in neighbors])
@@ -36,15 +38,38 @@ class Robot:
         return error
         
     # Draw the robot as a circle
-    def draw(self, screen):
-        x, y = int(self.state[0]), int(self.state[2])
-        pygame.draw.circle(screen, (0, 255, 0), (x, y), 10)
+    def draw(self, screen, camera_x=0.0, camera_y=0.0):
+        x = int(self.state[0] - camera_x)
+        y = int(self.state[2] - camera_y)
+
+        pygame.draw.circle(
+            screen,
+            (0, 255, 0),
+            (x, y),
+            10
+        )
+
+def world_to_screen(x, y, camera_x, camera_y):
+
+    screen_x = x - camera_x
+    screen_y = y - camera_y
+
+    if not np.isfinite(screen_x) or not np.isfinite(screen_y):
+        print("\n===== NAN SCREEN DEBUG =====")
+        print("x, y:", x, y)
+        print("camera:", camera_x, camera_y)
+        print("screen:", screen_x, screen_y)
+        raise ValueError("NaN reached world_to_screen")
+
+    return int(screen_x), int(screen_y)
 
 def run_sim():
     pygame.init()
     total_steps = 50000
     angle = 0.0  # Initial angle for rotation
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    camera_x = 0.0
+    camera_y = 0.0  
     myenv = env.FormationEnv(screen)
     num_robots = myenv.num_of_bots    # leader_robot = robots[0]
 
@@ -54,7 +79,8 @@ def run_sim():
         features_dim=64,
         d_model=64,
         nhead=4,
-        num_layers=2
+        num_layers=2,
+        num_active_robots=myenv.num_of_bots
     ),
     net_arch=[128, 128]
 )
@@ -111,14 +137,6 @@ def run_sim():
             if event.type == pygame.QUIT:
                 running = False
 
-        screen.fill((30, 30, 30))
-  
-        pygame.draw.circle(screen, (255, 0, 0), (int(myenv.formation_anchor[0]), int(myenv.formation_anchor[1])), 10)
-        
-
-        #print(f"Desired states: {desired_states.shape}")
-
-
         THRESHOLD = 0.0  # tweak as needed
         # pygame.draw.rect(screen, (255, 0, 0), pygame.Rect(myenv.target[0] - 5, myenv.target[1] - 5, 30, 30))
 
@@ -127,12 +145,69 @@ def run_sim():
         # print("action:", action)
         # print("action shape:", action.shape)
         obs, reward, terminated, end, info = myenv.step(action)
+
+        # =========================================
+        # CAMERA FOLLOWS ROBOTS
+        # =========================================
+
+        robot_center = np.mean(
+            [[r.state[0], r.state[2]] for r in myenv.robots],
+            axis=0
+        )
+
+        target_camera_x = robot_center[0] - WIDTH / 2
+        target_camera_y = robot_center[1] - HEIGHT / 2
+
+        camera_x += 0.05 * (target_camera_x - camera_x)
+        camera_y += 0.05 * (target_camera_y - camera_y)
+
+        # =========================================
+        # DRAW
+        # =========================================
+
+        screen.fill((30, 30, 30))
+
+
+        # anchor
+        ax, ay = world_to_screen(
+            myenv.formation_anchor[0],
+            myenv.formation_anchor[1],
+            camera_x,
+            camera_y
+        )
+
+        pygame.draw.circle(
+            screen,
+            (255, 0, 0),
+            (ax, ay),
+            10
+        )
+
+        # obstacles
+        for obs_pos in myenv.obstacles:
+
+            ox, oy = world_to_screen(
+                obs_pos[0],
+                obs_pos[1],
+                camera_x,
+                camera_y
+            )
+
+            pygame.draw.circle(
+                screen,
+                (255, 255, 255),
+                (ox, oy),
+                int(myenv.obstacles_radius)
+            )
+
+        # robots
+        myenv.render(camera_x, camera_y)
         
-        myenv.render()
+        # myenv.render()  # Removed redundant render call
         total_steps += 1  # Increment step count
-        if total_steps % 12000 == 0:
-            # print("Training... at step ", total_steps)
-            obs, info = myenv.reset()
+        # if total_steps % 46000 == 0:
+        #     # print("Training... at step ", total_steps)
+        #     obs, info = myenv.reset()
         if terminated:
             obs, _ = myenv.reset()
 

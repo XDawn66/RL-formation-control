@@ -25,6 +25,7 @@ class Robot:
         self.y_speed = self.state[3]
         self.action = [0,0]
         self.neighbor_indexs = []
+        self.mode = 0  # Default mode for the robot
 
     # def update(self, neighbors, desired_states):
         # Build q (stack of all robot states, each 1x4), will get 3x4 matrix
@@ -72,10 +73,16 @@ class Robot:
         error = q_all.flatten() - desired_states.flatten()
         return error
         
-    # Draw the robot as a circle
-    def draw(self, screen):
-        x, y = int(self.state[0]), int(self.state[2])
-        pygame.draw.circle(screen, (0, 255, 0), (x, y), 10)
+    def draw(self, screen, camera_x=0.0, camera_y=0.0):
+        x = int(self.state[0] - camera_x)
+        y = int(self.state[2] - camera_y)
+
+        pygame.draw.circle(
+            screen,
+            (0, 255, 0),
+            (x, y),
+            10
+        )
 
 def run_sim():
     pygame.init()

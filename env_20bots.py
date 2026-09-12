@@ -550,6 +550,7 @@ class FormationEnv(gym.Env):
         for i in range(self.num_of_bots):
             own_state = self.robots[i].state
             own_error = own_state - self.desired_states[i]
+   
 
             x_normalize = 100.0
             y_normalize = 50.0
