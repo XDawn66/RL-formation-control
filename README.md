@@ -8,11 +8,15 @@ The current architecture has been evaluated in simulation with teams ranging fro
 
 ## Demo Video
 
-Original project demo:
+Project demos:
+
+## Stage 1:
 
 https://youtu.be/FptJdGw1jp8
 
-> The current structured gain-learning and large-team experiments extend beyond the version shown in the original demo.
+## Stage 2 with collision avoidance:
+
+https://youtu.be/FptJdGw1jp8?si=9pNr0qkFD5tq5jX5
 
 ---
 
