@@ -40,6 +40,13 @@ class Robot:
         x, y = int(self.state[0]), int(self.state[2])
         pygame.draw.circle(screen, (0, 255, 0), (x, y), 10)
 
+def world_to_screen(x, y, camera_x, camera_y):
+
+    screen_x = x - camera_x
+    screen_y = y - camera_y
+    
+    return int(screen_x), int(screen_y)
+
 def run_sim():
     pygame.init()
     total_steps = 50000
@@ -47,6 +54,8 @@ def run_sim():
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     myenv = env.FormationEnv(screen)
     num_robots = myenv.num_of_bots    # leader_robot = robots[0]
+    camera_x = 0.0
+    camera_y = 0.0
 
     policy_kwargs = dict(
     features_extractor_class=RobotTransformerExtractor,
@@ -75,7 +84,7 @@ def run_sim():
     #model = SAC.load("models/sac_gamma_5bots_tran_II/test_200k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = SAC.load("models/sac_gamma_7bots_tran_II/test_200k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = SAC.load("models/sac_gamma_10bots_tran_I/test_50k.zip",myenv, tensorboard_log="./sac_car_env/")
-    model = SAC.load("models/sac_gamma_10bots_tran_I/test_50k.zip",myenv, tensorboard_log="./sac_car_env/")
+    model = SAC.load("models/sac_gamma_10bots_tran_I/test_75k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = SAC.load("models/sac_gamma_5bots_III/test_250k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = DDPG.load("demo/no_target_ddpg/test_4711_400k.zip",myenv, tensorboard_log="./DDPG_formation_env/")
 
@@ -114,13 +123,6 @@ def run_sim():
             if event.type == pygame.QUIT:
                 running = False
 
-        screen.fill((30, 30, 30))
-  
-        pygame.draw.circle(screen, (255, 0, 0), (int(myenv.formation_anchor[0]), int(myenv.formation_anchor[1])), 10)
-        
-
-        #print(f"Desired states: {desired_states.shape}")
-
 
         THRESHOLD = 0.0  # tweak as needed
         # pygame.draw.rect(screen, (255, 0, 0), pygame.Rect(myenv.target[0] - 5, myenv.target[1] - 5, 30, 30))
@@ -131,11 +133,69 @@ def run_sim():
         # print("action shape:", action.shape)
         obs, reward, terminated, end, info = myenv.step(action)
         
-        myenv.render()
+     
+        # =========================================
+        # CAMERA FOLLOWS ROBOTS
+        # =========================================
+
+        robot_center = np.mean(
+            [[r.state[0], r.state[2]] for r in myenv.robots],
+            axis=0
+        )
+
+        target_camera_x = robot_center[0] - WIDTH / 2
+        target_camera_y = robot_center[1] - HEIGHT / 2
+
+        camera_x += 0.05 * (target_camera_x - camera_x)
+        camera_y += 0.05 * (target_camera_y - camera_y)
+
+        # =========================================
+        # DRAW
+        # =========================================
+
+        screen.fill((30, 30, 30))
+
+
+        # anchor
+        ax, ay = world_to_screen(
+            myenv.formation_anchor[0],
+            myenv.formation_anchor[1],
+            camera_x,
+            camera_y
+        )
+
+        pygame.draw.circle(
+            screen,
+            (255, 0, 0),
+            (ax, ay),
+            10
+        )
+
+        # obstacles
+        for obs_pos in myenv.obstacles:
+
+            ox, oy = world_to_screen(
+                obs_pos[0],
+                obs_pos[1],
+                camera_x,
+                camera_y
+            )
+
+            pygame.draw.circle(
+                screen,
+                (255, 255, 255),
+                (ox, oy),
+                int(myenv.obstacles_radius)
+            )
+
+        # robots
+        myenv.render(camera_x, camera_y)
+        
+        # myenv.render()
         total_steps += 1  # Increment step count
-        if total_steps % 22000 == 0:
-            # print("Training... at step ", total_steps)
-            obs, info = myenv.reset()
+        # if total_steps % 12000 == 0:
+        #     # print("Training... at step ", total_steps)
+        #     obs, info = myenv.reset()
         if terminated:
             obs, _ = myenv.reset()
 

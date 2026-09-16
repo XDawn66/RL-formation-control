@@ -132,7 +132,7 @@ class FormationEnv(gym.Env):
         self.prev_formation_error = None
         self.prev_tracking_error = None
 
-        self.formation_error = None
+        self.formation_error = 999.0
         self.tracking_error = None
         self.control_effort = None
         
@@ -156,6 +156,29 @@ class FormationEnv(gym.Env):
         self.gamma_history = []
         self.formation_error_history = []
         self.stable_steps = 0
+
+          # for avoidance mode
+        self.safe_distance = 30.0  # safe distance for avoidance mode
+        self.robot_radius = 5.0  # radius of the robot for avoidance mode
+        self.sensing_radius = 500.0
+        self.avoidance_distance = 100.0
+
+        self.obstacle_spawned = False
+        self.obstacles = []
+        self.obstacles_radius = 15.0
+
+        self.obstacle_spawn_count = 0
+        self.max_obstacle_spawns = 10
+
+        self.last_obstacle_spawn_step = -999999
+        self.obstacle_spawn_cooldown = 12000
+
+        self.FORMATION_READY_THRESHOLD = 0.08
+        self.OBSTACLE_SPAWN_DISTANCE = 1500.0
+
+        self.current_wall_dir = None
+        self.current_wall_angle = None
+        self.current_wall_half_length = None
 
     def step(self, actions):
 
@@ -203,6 +226,18 @@ class FormationEnv(gym.Env):
 
         self.Gamma = np.kron(np.eye(self.num_of_bots), self.Gamma_1)  # shape (6×12)
 
+         # Phase 1: let every robot run Rule 1 / Rule 2
+        for i in range(self.num_of_bots):
+            self.desired_states[i] = self.calculate_avoidance_subgoal(i)
+
+        # Phase 2: after everyone has chosen, fix tiny 1-robot groups
+        self.rebalance_avoidance_groups()
+
+        # Phase 3: recompute avoidance subgoals if any side changed
+        for i in range(self.num_of_bots):
+            if self.robots[i].mode == 1:
+                self.desired_states[i] = self.calculate_avoidance_subgoal(i)
+
         error = np.array([r.state for r in self.robots]).flatten() - self.desired_states.flatten()
 
         rho = self.L1 @ error
@@ -211,14 +246,100 @@ class FormationEnv(gym.Env):
 
         r = np.clip(r, -10.0, 10.0)
 
-        #print(f"self.Gamma_1: {self.Gamma_1}")
+        
+    # =========================================
+    # SPAWN OBSTACLE AFTER FORMATION CONVERGES
+    # =========================================
+
+        can_spawn_again = (
+            self.current_step - self.last_obstacle_spawn_step
+            >= self.obstacle_spawn_cooldown
+        )
+
+        if (
+            self.formation_error < self.FORMATION_READY_THRESHOLD
+            and can_spawn_again
+            and self.obstacle_spawn_count < self.max_obstacle_spawns
+        ):
+            self.spawn_test_wall()
         
         for i, robot in enumerate(self.robots):
-            r_i = r[2*i:2*i+2]
-            r_i += u_track
+                r_i = r[2*i:2*i+2].copy()
+    
+                if robot.mode == 1:
+    
+                    # Keep some formation coupling
+                    # r_i *= 0.25
+                    r_i *= 0.05
+    
+                    pos = robot.state[[0, 2]]
+                    vel = robot.state[[1, 3]]
+    
+                    desired_pos = self.desired_states[i][[0, 2]]
+    
+                    # During avoidance, don't demand [40,20] immediately.
+                    # Let position control generate the maneuver.
+                    desired_vel = 0.4 * self.FORMATION_VELOCITY
+    
+                    Kp_avoid = 2.0
+                    Kd_avoid = 1.3
+    
+                    u_subgoal = (
+                        Kp_avoid * (desired_pos - pos)
+                        + Kd_avoid * (desired_vel - vel)
+                    )
+    
+                    # speed reugaltion
+                    travel_dir = (
+                        self.FORMATION_VELOCITY.astype(float)
+                        / np.linalg.norm(self.FORMATION_VELOCITY)
+                    )
+    
+                    forward_speed = np.dot(vel, travel_dir)
+    
+                    desired_forward_speed = np.dot(
+                        desired_vel,
+                        travel_dir
+                    )
+    
+                    forward_acc = np.dot(
+                        u_subgoal,
+                        travel_dir
+                    )
+    
+                    # Already too fast:
+                    # don't allow positive acceleration along travel direction
+                    if (
+                        forward_speed > desired_forward_speed
+                        and forward_acc > 0
+                    ):
+                        u_subgoal -= forward_acc * travel_dir
+    
+                    # Give avoidance real authority
+                    u_subgoal = np.clip(
+                        u_subgoal,
+                        -10.0,
+                        10.0
+                    )
+    
+                    consensus_raw = r_i.copy()
+    
+                    r_i += u_subgoal
+    
+                    # only tiny global tracking while avoiding
+                    r_i += 0.05 * u_track
+    
+                else:
+                    r_i += u_track
 
-            dq = self.A0 @ robot.state.reshape(4, 1) + self.B0 @ r_i.reshape(2, 1)
-            robot.state += dq.flatten() * self.dt
+                r_i = np.clip(
+                    r_i,
+                    -10.0,
+                    10.0
+                )
+
+                dq = self.A0 @ robot.state.reshape(4, 1) + self.B0 @ r_i.reshape(2, 1)
+                robot.state += dq.flatten() * self.dt
             # print(f"dq for robot {i}: {dq.flatten() * self.dt}")
 
         # r_i += FORMATION_VELOCITY
@@ -491,6 +612,10 @@ class FormationEnv(gym.Env):
         self.prev_formation_error = None
         self.prev_tracking_error = None
 
+        
+        self.obstacles = []
+        self.obstacle_spawned = False
+
         for i in range(self.num_of_bots):
             # robot = base.Robot(i, (np.random.uniform(10, self.WIDTH - 100),   # random x within (10, 100)
             #                        np.random.uniform(10, self.HEIGHT - 100)))   # random y within bounds
@@ -552,10 +677,490 @@ class FormationEnv(gym.Env):
         # print("obs shape:", obs.shape)
         return obs
     
-    def render(self):
+    def render(self, camera_x=0.0, camera_y=0.0):
         for r in self.robots:
-            r.draw(self.screen)
+            r.draw(self.screen, camera_x, camera_y)
+
         pygame.display.flip()
         
     def close(self):
         pygame.quit()
+
+    def spawn_test_wall(self):
+
+        travel_dir = (
+            self.FORMATION_VELOCITY.astype(float)
+            / np.linalg.norm(self.FORMATION_VELOCITY)
+        )
+
+        # -----------------------------
+        # RANDOM WALL PARAMETERS
+        # -----------------------------
+
+        half_length = np.random.uniform(60.0, 180.0)
+
+        angle_offset_deg = np.random.uniform(-35.0, 35.0)
+        angle_offset = np.deg2rad(angle_offset_deg)
+
+        num_points = np.random.randint(7, 16)
+
+        # -----------------------------
+        # BASE WALL DIRECTION
+        # perpendicular to travel
+        # -----------------------------
+
+        base_wall_dir = np.array([
+            -travel_dir[1],
+            travel_dir[0]
+        ])
+
+        # -----------------------------
+        # ROTATE WALL
+        # -----------------------------
+
+        c = np.cos(angle_offset)
+        s = np.sin(angle_offset)
+
+        R = np.array([
+            [c, -s],
+            [s,  c]
+        ])
+
+        wall_dir = R @ base_wall_dir
+
+        self.current_wall_dir = wall_dir.copy()
+        self.current_wall_angle = angle_offset_deg
+        self.current_wall_half_length = half_length
+
+        # -----------------------------
+        # PLACE WALL AHEAD
+        # -----------------------------
+
+        wall_center = (
+            self.formation_anchor
+            + self.OBSTACLE_SPAWN_DISTANCE * travel_dir
+        )
+
+        # remove previous wall
+        self.obstacles = []
+
+        for offset in np.linspace(
+            -half_length,
+            half_length,
+            num_points
+        ):
+            point = wall_center + offset * wall_dir
+            self.obstacles.append(point)
+
+        self.obstacle_spawn_count += 1
+        self.last_obstacle_spawn_step = self.current_step
+
+    def calculate_avoidance_subgoal(self, robot_idx):
+        robot = self.robots[robot_idx]
+        own_state = self.robots[robot_idx].state
+        own_pos = own_state[[0, 2]]
+
+        nearest_obstacle = None
+        min_distance = float("inf")
+
+        # -----------------------------------
+        # Geometry of current wall
+        # -----------------------------------
+
+        wall_points = np.array(self.obstacles, dtype=float)
+
+        if len(wall_points) == 0:
+            self.robots[robot_idx].mode = 0
+            return self.desired_states[robot_idx]
+
+        if self.current_wall_dir is None:
+                for i, robot in enumerate(self.robots):
+                    robot.mode = 0
+                return self.desired_states[robot_idx]
+
+        wall_center = np.mean(wall_points, axis=0)
+
+        travel_dir = self.FORMATION_VELOCITY.astype(float)
+        travel_dir /= np.linalg.norm(travel_dir)
+
+        # wall runs perpendicular to travel
+        wall_dir = self.current_wall_dir
+
+        # project wall points onto wall direction
+        wall_projection = (
+            (wall_points - wall_center) @ wall_dir
+        )
+
+        end_1 = (
+            wall_center
+            + np.min(wall_projection) * wall_dir
+        )
+
+        end_2 = (
+            wall_center
+            + np.max(wall_projection) * wall_dir
+        )
+
+        margin = 140.0
+        forward_margin = 120.0
+
+        exit_1 = (
+            end_1
+            - margin * wall_dir
+            + forward_margin * travel_dir
+        )
+
+        exit_2 = (
+            end_2
+            + margin * wall_dir
+            + forward_margin * travel_dir
+        )
+
+        exit_1 = force_exit_forward(
+            exit_1,
+            wall_center,
+            travel_dir,
+            min_forward=150.0
+        )
+
+        exit_2 = force_exit_forward(
+            exit_2,
+            wall_center,
+            travel_dir,
+            min_forward=150.0
+        )
+
+        # Find nearest sensed obstacle
+        for obstacle in self.obstacles:
+            obs_pos = np.asarray(obstacle, dtype=float)
+
+            distance = np.linalg.norm(own_pos - obs_pos)
+
+            rel_pos = obs_pos - own_pos
+
+            # only consider obstacle points ahead
+            if np.dot(rel_pos, travel_dir) <= 0:
+                continue
+
+            if (
+                distance < min_distance
+                and distance < self.sensing_radius
+            ):
+                min_distance = distance
+                nearest_obstacle = obstacle
+
+            if nearest_obstacle is None:
+                robot.mode = 0
+                robot.avoid_side = None
+                return self.desired_states[robot_idx]
+
+            obs_pos = np.asarray(nearest_obstacle, dtype=float)
+            rel_pos = obs_pos - own_pos
+
+            if np.dot(rel_pos, travel_dir) <= 0:
+                continue
+
+            if distance < min_distance and distance < self.sensing_radius:
+                min_distance = distance
+                nearest_obstacle = obstacle
+
+
+
+        # -----------------------------------
+        # MODE SWITCHING / HYSTERESIS
+        # -----------------------------------
+
+        # No obstacle sensed at all
+        if nearest_obstacle is None:
+            robot.mode = 0
+            robot.avoid_side = None
+            return self.desired_states[robot_idx]
+
+        rel_pos = obs_pos - own_pos
+        dist = np.linalg.norm(rel_pos)
+
+        obs_dir = rel_pos / (dist + 1e-6)
+
+        robot_vel = own_state[[1, 3]]
+
+        closing_speed = np.dot(robot_vel, obs_dir)
+
+        base_trigger = 380.0
+        speed_gain = 15.0
+
+        trigger_distance = (
+            base_trigger
+            + speed_gain * max(closing_speed, 0.0)
+        )
+
+        if robot.mode == 0:
+            if min_distance < trigger_distance:
+                robot.mode = 1
+
+        elif robot.mode == 1:
+
+            # how far robot has traveled past the wall
+            wall_progress = np.dot(
+                own_pos - wall_center,
+                travel_dir
+            )
+
+            PASS_MARGIN = 160.0
+
+            # robot has cleared the wall -> stop avoidance
+            if wall_progress > PASS_MARGIN:
+                robot.mode = 0
+                robot.avoid_side = None
+                return self.desired_states[robot_idx]
+
+        if robot.mode == 0:
+            if min_distance < trigger_distance:
+                robot.mode = 1
+
+        
+       # -----------------------------------
+        # AVOIDANCE MODE
+        # -----------------------------------
+
+        wall_x_mean = np.mean([obs[0] for obs in self.obstacles])
+        wall_y_min = min(obs[1] for obs in self.obstacles)
+        wall_y_max = max(obs[1] for obs in self.obstacles)
+        wall_center_y = 0.5 * (wall_y_min + wall_y_max)
+
+      # Preserve existing side
+        if (
+            robot.mode == 1
+            and getattr(robot, "avoid_side", None) is not None
+        ):
+            chosen_side = robot.avoid_side
+        else:
+            chosen_side = None
+
+        cost_1 = np.linalg.norm(exit_1 - own_pos)
+        cost_2 = np.linalg.norm(exit_2 - own_pos)
+
+        own_side = -1.0 if cost_1 < cost_2 else 1.0
+
+        cost_difference = abs(cost_1 - cost_2)
+
+        GEOMETRY_THRESHOLD = 80.0
+
+        if cost_difference > GEOMETRY_THRESHOLD:
+            chosen_side = own_side
+
+        # -------------------------
+        # RULE 1
+        # ONLY if robot has no side yet
+        # -------------------------
+        if chosen_side is None:
+
+            candidate_neighbor = None
+            best_progress = -float("inf")
+
+            for neighbor_idx in robot.neighbor_indexs:
+
+                neighbor = self.robots[neighbor_idx]
+
+                if (
+                    neighbor.mode == 1
+                    and getattr(neighbor, "avoid_side", None) is not None
+                ):
+
+                    neighbor_pos = neighbor.state[[0, 2]]
+
+                    rel_to_anchor = (
+                        neighbor_pos - self.formation_anchor
+                    )
+
+                    progress = np.dot(
+                        rel_to_anchor,
+                        travel_dir
+                    )
+
+                    if progress > best_progress:
+                        best_progress = progress
+                        candidate_neighbor = neighbor
+
+            if candidate_neighbor is not None:
+                chosen_side = candidate_neighbor.avoid_side
+
+
+        # -------------------------
+        # RULE 2: own geometry choice
+        # only if Rule 1 gave no direction
+        # -------------------------
+        if chosen_side is None:
+
+            exit_1 = (
+                end_1
+                - margin * wall_dir
+                + forward_margin * travel_dir
+            )
+
+            exit_2 = (
+                end_2
+                + margin * wall_dir
+                + forward_margin * travel_dir
+            )
+
+            exit_1 = force_exit_forward(
+                exit_1,
+                wall_center,
+                travel_dir,
+                min_forward=150.0
+            )
+
+            exit_2 = force_exit_forward(
+                exit_2,
+                wall_center,
+                travel_dir,
+                min_forward=150.0
+            )
+
+            # print(
+            #     "exit_1:", exit_1,
+            #     "exit_2:", exit_2
+            # )
+
+            cost_1 = np.linalg.norm(exit_1 - own_pos)
+            cost_2 = np.linalg.norm(exit_2 - own_pos)
+
+            if cost_1 < cost_2:
+                chosen_side = -1.0   # UP
+            else:
+                chosen_side = 1.0    # DOWN
+
+
+        robot.avoid_side = chosen_side
+
+
+        # -------------------------
+        # actual subgoal
+        # -------------------------
+        margin = 60.0
+
+        if robot.avoid_side < 0:
+            target_pos = exit_1
+        else:
+            target_pos = exit_2
+
+        subgoal = self.desired_states[robot_idx].copy()
+
+        subgoal[0] = target_pos[0]
+        subgoal[2] = target_pos[1]
+
+        side_dir = np.array([
+                    -travel_dir[1],
+                    travel_dir[0]
+                ])
+
+        return np.array([
+            subgoal[0],
+            0.0,             # important
+            subgoal[2],
+            0.0
+        ])
+    def rebalance_avoidance_groups(self):
+
+        active = [
+            i for i, r in enumerate(self.robots)
+            if r.mode == 1 and getattr(r, "avoid_side", None) is not None
+        ]
+
+        if len(active) < 3:
+            return
+
+        side_neg = [
+            i for i in active
+            if self.robots[i].avoid_side < 0
+        ]
+
+        side_pos = [
+            i for i in active
+            if self.robots[i].avoid_side > 0
+        ]
+
+        MIN_GROUP_SIZE = 2
+
+        # no actual split, so don't force one
+        if len(side_neg) == 0 or len(side_pos) == 0:
+            return
+
+        wall_points = np.asarray(self.obstacles, dtype=float)
+        if len(wall_points) == 0:
+            return
+
+        wall_center = np.mean(wall_points, axis=0)
+
+        travel_dir = self.FORMATION_VELOCITY.astype(float)
+        travel_dir /= np.linalg.norm(travel_dir)
+
+        wall_dir = self.current_wall_dir
+
+        wall_projection = (
+            wall_points - wall_center
+        ) @ wall_dir
+
+        end_1 = (
+            wall_center
+            + np.min(wall_projection) * wall_dir
+        )
+
+        end_2 = (
+            wall_center
+            + np.max(wall_projection) * wall_dir
+        )
+
+        margin = 140.0
+        forward_margin = 120.0
+
+        exit_1 = (
+            end_1
+            - margin * wall_dir
+            + forward_margin * travel_dir
+        )
+
+        exit_2 = (
+            end_2
+            + margin * wall_dir
+            + forward_margin * travel_dir
+        )
+
+        # Case: only one robot on -1 side
+        if len(side_neg) < MIN_GROUP_SIZE and len(side_pos) > MIN_GROUP_SIZE:
+
+            candidate = min(
+                side_pos,
+                key=lambda i: np.linalg.norm(
+                    self.robots[i].state[[0, 2]] - exit_1
+                )
+            )
+
+            self.robots[candidate].avoid_side = -1.0
+
+        # Case: only one robot on +1 side
+        elif len(side_pos) < MIN_GROUP_SIZE and len(side_neg) > MIN_GROUP_SIZE:
+
+            candidate = min(
+                side_neg,
+                key=lambda i: np.linalg.norm(
+                    self.robots[i].state[[0, 2]] - exit_2
+                )
+            )
+
+            self.robots[candidate].avoid_side = 1.0
+
+def force_exit_forward(exit_point, wall_center, travel_dir, min_forward=120.0):
+
+    forward_progress = np.dot(
+        exit_point - wall_center,
+        travel_dir
+    )
+
+    if forward_progress < min_forward:
+        exit_point = (
+            exit_point
+            + (min_forward - forward_progress) * travel_dir
+        )
+
+    return exit_point

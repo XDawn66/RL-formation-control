@@ -54,13 +54,6 @@ def world_to_screen(x, y, camera_x, camera_y):
     screen_x = x - camera_x
     screen_y = y - camera_y
 
-    if not np.isfinite(screen_x) or not np.isfinite(screen_y):
-        print("\n===== NAN SCREEN DEBUG =====")
-        print("x, y:", x, y)
-        print("camera:", camera_x, camera_y)
-        print("screen:", screen_x, screen_y)
-        raise ValueError("NaN reached world_to_screen")
-
     return int(screen_x), int(screen_y)
 
 def run_sim():
@@ -203,7 +196,7 @@ def run_sim():
         # robots
         myenv.render(camera_x, camera_y)
         
-        # myenv.render()  # Removed redundant render call
+        # myenv.Tz()  # Removed redundant render call
         total_steps += 1  # Increment step count
         # if total_steps % 46000 == 0:
         #     # print("Training... at step ", total_steps)

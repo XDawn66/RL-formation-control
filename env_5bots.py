@@ -338,37 +338,11 @@ class FormationEnv(gym.Env):
                 )
 
                 consensus_raw = r_i.copy()
-                # if (
-                #     i == 0
-                #     and self.current_step % 50 == 0
-                # ):
-                #     print("\n--- CONTROL DEBUG ---")
-                #     print("step:", self.current_step)
-                #     print("pos:", pos)
-                #     print("vel:", vel)
-                #     print("desired_pos:", desired_pos)
-                #     print("position_error:", desired_pos - pos)
-                #     print("desired_vel:", desired_vel)
-                #     print("velocity_error:", desired_vel - vel)
-                #     print("consensus_raw:", consensus_raw)
-                #     print("u_subgoal:", u_subgoal)
-                #     print("u_track:", u_track)
-                #     print("forward speed:", forward_speed)
-                #     print("desired forward speed:", desired_forward_speed)
-                #     print("forward accel:", np.dot(u_subgoal, travel_dir))
-
 
                 r_i += u_subgoal
 
                 # only tiny global tracking while avoiding
                 r_i += 0.05 * u_track
-
-                if i == 0 and self.current_step % 50 == 0:
-                    print("0.05 consensus:", 0.05 * consensus_raw)
-                    print("u_subgoal:", u_subgoal)
-                    print("0.05 u_track:", 0.05 * u_track)
-                    print("FINAL CONTROL:", r_i)
-                    print("mode:", robot.mode)
 
             else:
                 r_i += u_track
@@ -468,101 +442,6 @@ class FormationEnv(gym.Env):
             "failure": failure,
         }
 
-        # if self.current_step % 1000 == 0:
-        #     print(
-        #         "step:", self.current_step,
-        #         "raw action:", actions,
-        #         "g1:", g1,
-        #         "g2:", g2
-        #     )
-        #     print("formation_error", self.formation_error, "tracking_error", self.tracking_error)
-
-
-        # if self.current_step % 50 == 0:
-        #     print("================================")
-        #     print("step:", self.current_step)
-
-        #     mode_name = {
-        #                 0: "FORMATION",
-        #                 1: "AVOID"
-        #     }
-            
-        #     for i, robot in enumerate(self.robots):
-        #         print(f"Robot {i}: {mode_name.get(robot.mode, 'UNKNOWN')}")
-
-        
-
-        #     print(
-        #         "center-anchor distance:",
-        #         np.linalg.norm(
-        #             self.robot_center - np.mean(
-        #                 np.array([s[[0, 2]] for s in self.desired_states]),
-        #                 axis=0
-        #             )
-        #         )
-        #     )
-
-        #     desired_positions = np.array([
-        #         s[[0, 2]]
-        #         for s in self.desired_states
-        #     ])
-
-        #     desired_center = np.mean(
-        #         desired_positions,
-        #         axis=0
-        #     )
-
-        #     center_tracking_error = np.linalg.norm(
-        #         self.robot_center - desired_center
-        #     )
-
-        #     print(
-        #         "u_track magnitude:",
-        #         np.linalg.norm(u_track)
-        #     )
-
-        #     print(
-        #         "consensus magnitude:",
-        #         np.linalg.norm(r)
-        #     )
-
-        #     print(
-        #         "formation error:",
-        #         self.formation_error
-        #     )
-
-        #     print(
-        #         "tracking error:",
-        #         self.tracking_error
-        #     )
-
-        #     print("g1:", g1, "g2:", g2)
-
-        # if self.current_step % 1000 == 0:
-
-        #     print("Individual position errors:")
-
-        #     for i, robot in enumerate(self.robots):
-        #         pos = robot.state[[0, 2]]
-        #         desired_pos = self.desired_states[i][[0, 2]]
-
-        #         print(
-        #             i,
-        #             np.linalg.norm(pos - desired_pos)
-        #         )
-
-        #     print(
-        #         "desired-center tracking:",
-        #         center_tracking_error
-        #     )
-
-        #     print(
-        #         "consensus effort:",
-        #         np.linalg.norm(r)
-        #     )
-
-                    
-
         return obs, reward, terminated, truncated, info
     
     def get_reward(self):
@@ -638,25 +517,7 @@ class FormationEnv(gym.Env):
         reward += min(stay_bonus, 1.0)
 
         reward += stay_bonus
-        # self.prev_error = current_error
-        # reward = formation_reward + tracking_reward - w3 * (control_effort)**2
 
-        # print("error",formation_error, control_effort)
-        # print("tuned error",w1 * formation_error**2, w2 * tracking_error**2, w3 * control_effort**2)
-        # print("base reward", base_reward)
-        # print("tracking_error" , tracking_error**2)
-        # print("  ", reward)
-        # print("spread penalty: ", spread_penalty)
-        # print("worst bot penalty: ", worst_bot_penalty)
-        # # print("Formation error ", formation_error**2)
-        #print("Worst robot error ", 2.0 * worst_robot_error**2)
-        #print("Average robot error ", 0.5 * avg_robot_error**2)
-
-        # print("tracking reward ", tracking_improve)
-        # print("formation reward: ", formation_improve)
-        # print("================================")
-        # reward = base_reward
-        
         return reward
     
     def reset(self, seed = None, options = None):
@@ -710,25 +571,6 @@ class FormationEnv(gym.Env):
             own_error = own_state - self.desired_states[i]
 
 
-        #     sensing_radius = 100.0
-        #     nearest_robot = None
-        #     min_distance = float('inf')
-        #     for j in range(self.num_of_bots):
-        #         if i != j:
-        #             distance = np.linalg.norm(own_state[[0, 2]] - self.robots[j].state[[0, 2]])
-        #             if distance < min_distance:
-        #                 min_distance = distance
-        #                 nearest_robot = self.robots[j]
-
-        #     nearest_obstacle = None
-        #     min_obstacle_distance = float('inf')
-        #     for obstacle in self.obstacles:
-        #         distance = np.linalg.norm(own_state[[0, 2]] - obstacle[[0, 2]])
-        #         if distance < sensing_radius:
-        #             if distance < min_obstacle_distance:
-        #                 min_obstacle_distance = distance
-        #                 nearest_obstacle = obstacle
-
             x_normalize = 100.0
             y_normalize = 50.0
 
@@ -739,18 +581,6 @@ class FormationEnv(gym.Env):
             own_error[3] / y_normalize    # y velocity error
             ], dtype=np.float32)
 
-
-            # if len(neighbor_info) > 0:
-            #     neighbor_info = np.concatenate(neighbor_info)
-            # else:
-            #     neighbor_info = np.zeros(4 * len(self.robots[i].neighbor_indexs))  # No neighbors, so fill with zeros
-            
-            # robot_obs = np.concatenate([own_state, own_error, neighbor_info])
-
-            # obs.append(robot_token)
-
-        # obs = np.concatenate(obs).astype(np.float32)
-        # print("obs shape:", obs.shape)
         return obs
     
     def render(self, camera_x=0.0, camera_y=0.0):
@@ -829,23 +659,6 @@ class FormationEnv(gym.Env):
 
         self.obstacle_spawn_count += 1
         self.last_obstacle_spawn_step = self.current_step
-
-        # print(
-        #     f"Spawned wall {self.obstacle_spawn_count}"
-        #     f"\nangle offset: {angle_offset_deg:.1f} deg"
-        #     f"\nlength: {2 * half_length:.1f}"
-        #     f"\npoints: {num_points}"
-        #     f"\ncenter: {wall_center}"
-        # )
-
-        print(
-            "\n======== NEW WALL ========",
-            "\nstep:", self.current_step,
-            "\nwall:", self.obstacle_spawn_count + 1,
-            "\nangle:", angle_offset_deg,
-            "\ncenter:", wall_center,
-            "\nrobot modes:", [r.mode for r in self.robots]
-        )
 
     def calculate_avoidance_subgoal(self, robot_idx):
         robot = self.robots[robot_idx]
@@ -1104,7 +917,7 @@ class FormationEnv(gym.Env):
 
             exit_2 = force_exit_forward(
                 exit_2,
-                walal_center,
+                wall_center,
                 travel_dir,
                 min_forward=150.0
             )
@@ -1145,55 +958,6 @@ class FormationEnv(gym.Env):
                     -travel_dir[1],
                     travel_dir[0]
                 ])
-        
-        # target_vec = target_pos - own_pos
-
-        # forward_component = np.dot(
-        #     target_vec,
-        #     travel_dir
-        # )
-
-        # lateral_component = np.dot(
-        #     target_vec,
-        #     side_dir
-        # )
-
-        # print("target_vec:", target_vec)
-        # print("forward component:", forward_component)
-        # print("lateral component:", lateral_component)
-
-        # if (
-        #     robot_idx == 0
-        #     and robot.mode == 1
-        #     and self.current_step % 50 == 0
-        # ):
-        #     print("\n--- GEOMETRY DEBUG ---")
-        #     print("step:", self.current_step)
-        #     print("own_pos:", own_pos)
-        #     print("wall_center:", wall_center)
-        #     print("wall_dir:", wall_dir)
-        #     print("exit_1:", exit_1)
-        #     print("exit_2:", exit_2)
-        #     print("chosen_side:", robot.avoid_side)
-        #     print("target_pos:", target_pos)
-        #     print("target_error:", target_pos - own_pos)
-        #     print("min_distance:", min_distance)
-
-        #     print(
-        #         "forward_to_target:",
-        #         np.dot(target_pos - own_pos, travel_dir)
-        #     )
-
-        #     print(
-        #         "wall_progress:",
-        #         np.dot(own_pos - wall_center, travel_dir)
-        #     )
-        if self.current_step % 50 == 0:
-            print(
-                "robot", robot_idx,
-                "mode", robot.mode,
-                "side", robot.avoid_side
-            )
 
         return np.array([
             subgoal[0],
