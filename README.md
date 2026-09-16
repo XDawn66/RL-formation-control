@@ -16,7 +16,7 @@ https://youtu.be/FptJdGw1jp8
 
 ## Stage 2 with collision avoidance:
 
-https://youtu.be/FptJdGw1jp8?si=9pNr0qkFD5tq5jX5
+https://youtu.be/T281nux2OXo?si=JbH__yOjlHGK1VRv
 
 ---
 
