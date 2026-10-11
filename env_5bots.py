@@ -16,12 +16,12 @@ class FormationEnv(gym.Env):
         self.num_of_bots = 5
 
         self.max_robots = 20
-        self.robot_feature_dim = 4
+        self.robot_feature_dim = 7
         
         # self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2* self.num_of_bots,), dtype=np.float32)
         # self.observation_space = spaces.Box(low=-1.0, high=1.0, shape=(48,), dtype=np.float32)
 
-        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2 + 2 * self.num_of_bots,), dtype=np.float32)
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
@@ -32,11 +32,11 @@ class FormationEnv(gym.Env):
         self.FORMATION_VELOCITY = np.array([40, 20])
         # try to make a triangle
         self.FORMATION_OFFSET = np.array([
-            [0,   0],
-            [0,  80],
-            [0, -80],
-            [0, 160],
-            [0,-160]
+            [0, 0],
+            [15, 0],
+            [0, 15],
+            [25, 15],
+            [8, 25]
         ])
 
         # adjacency matrix for a directed graph
@@ -143,7 +143,7 @@ class FormationEnv(gym.Env):
         self.divergence_patience = 200   # 200 steps = 1 simulated second at dt=0.005
         self.divergence_margin = 0.32    # must be 20% worse than best error
         self.warmup_steps = 200          # do not terminate immediately after reset
-        self.max_episode_steps = 6000
+        self.max_episode_steps = 50000
 
         # local stable test
         # eigvals = np.linalg.eigvals(self.L)
@@ -197,8 +197,10 @@ class FormationEnv(gym.Env):
         [self.formation_anchor[0] + offset[0], self.FORMATION_VELOCITY[0], self.formation_anchor[1] + offset[1], self.FORMATION_VELOCITY[1]]
             for offset in self.FORMATION_OFFSET
         ])
-        
 
+        raw_g1, raw_g2 = actions[:2]
+        avoid_actions = actions[2:].reshape(self.num_of_bots,2)
+        
         Kp_track = 0.3
         Kd_track = 0.5
 
@@ -210,11 +212,14 @@ class FormationEnv(gym.Env):
         for i in range(self.num_of_bots):
             # it will be [dx,dy] from [dx1, dy1, dx2, dy2, dx3, dy3]
             # self.robots[i].action = actions[2*i : 2*i+2]
-            self.robots[i].action = actions
+            # self.robots[i].action = actions
+
+            # each robot stores avoid_x, avoid_y 
+            self.robots[i].action = avoid_actions[i]
         # print(f"Robot actions:")
         # print(actions.reshape(3, 2))
 
-        raw_g1, raw_g2 = actions
+
 
         g1 = 1.0 * (raw_g1 + 1.0) / 2.0
         g2 = 1.0 * (raw_g2 + 1.0) / 2.0
@@ -236,19 +241,6 @@ class FormationEnv(gym.Env):
         ] for offset in self.FORMATION_OFFSET])
 
         self.desired_states = normal_desired_states.copy()
-
-        # Phase 1: let every robot run Rule 1 / Rule 2
-        for i in range(self.num_of_bots):
-            self.desired_states[i] = self.calculate_avoidance_subgoal(i)
-
-        # Phase 2: after everyone has chosen, fix tiny 1-robot groups
-        self.rebalance_avoidance_groups()
-
-        # Phase 3: recompute avoidance subgoals if any side changed
-        for i in range(self.num_of_bots):
-            if self.robots[i].mode == 1:
-                self.desired_states[i] = self.calculate_avoidance_subgoal(i)
-                        
 
         error = np.array([r.state for r in self.robots]).flatten() - self.desired_states.flatten()
 
@@ -281,71 +273,15 @@ class FormationEnv(gym.Env):
         for i, robot in enumerate(self.robots):
             r_i = r[2*i:2*i+2].copy()
 
-            if robot.mode == 1:
+            AVOID_SCALE = 3.0
 
-                # Keep some formation coupling
-                # r_i *= 0.25
-                r_i *= 0.05
+            u_avoid = AVOID_SCALE * avoid_actions[i]
 
-                pos = robot.state[[0, 2]]
-                vel = robot.state[[1, 3]]
+            # avoidance control
+            r_i += u_avoid
 
-                desired_pos = self.desired_states[i][[0, 2]]
-
-                # During avoidance, don't demand [40,20] immediately.
-                # Let position control generate the maneuver.
-                desired_vel = 0.4 * self.FORMATION_VELOCITY
-
-                Kp_avoid = 2.0
-                Kd_avoid = 1.3
-
-                u_subgoal = (
-                    Kp_avoid * (desired_pos - pos)
-                    + Kd_avoid * (desired_vel - vel)
-                )
-
-                # speed reugaltion
-                travel_dir = (
-                    self.FORMATION_VELOCITY.astype(float)
-                    / np.linalg.norm(self.FORMATION_VELOCITY)
-                )
-
-                forward_speed = np.dot(vel, travel_dir)
-
-                desired_forward_speed = np.dot(
-                    desired_vel,
-                    travel_dir
-                )
-
-                forward_acc = np.dot(
-                    u_subgoal,
-                    travel_dir
-                )
-
-                # Already too fast:
-                # don't allow positive acceleration along travel direction
-                if (
-                    forward_speed > desired_forward_speed
-                    and forward_acc > 0
-                ):
-                    u_subgoal -= forward_acc * travel_dir
-
-                # Give avoidance real authority
-                u_subgoal = np.clip(
-                    u_subgoal,
-                    -10.0,
-                    10.0
-                )
-
-                consensus_raw = r_i.copy()
-
-                r_i += u_subgoal
-
-                # only tiny global tracking while avoiding
-                r_i += 0.05 * u_track
-
-            else:
-                r_i += u_track
+            # tracking control
+            r_i += u_track
 
             # emergency repulsion can go here
             # r_i += u_avoid
@@ -380,23 +316,7 @@ class FormationEnv(gym.Env):
         #     for offset in self.FORMATION_OFFSET
         # ])
 
-        old_states = np.array([r.state.copy() for r in self.robots])
-        new_states = []
 
-        # uniform control for direct rl control
-        # for i in range(self.num_of_bots):
-        #     Max_ACC = 10.0
-        #     u_i = actions[2*i:2*i+2] * Max_ACC
-        #     dq = self.A0 @ old_states[i].reshape(4, 1) + self.B0 @ u_i.reshape(2, 1)
-        #     next_state = old_states[i] + dq.flatten() * self.dt
-        #     self.robots[i].state = next_state
-        #     new_states.append(next_state)
-
-        # self.robots = new_states
-        done = False
-        # formation_error = np.linalg.norm(self.L1 @ error)
-        # done = formation_error < threshold
-        # calling get reward to any individual is fine since they have all info about others
         reward = self.get_reward()
         reward = float(np.clip(reward, -10.0, 10.0))
 
@@ -430,6 +350,14 @@ class FormationEnv(gym.Env):
 
         #terminated = failure
         terminated = False
+        if self.collision_penalty > 0:
+            terminated = True
+
+        if self.robot_collision_penalty > 0:
+            terminated = True
+
+        if reward < -10.0:
+            terminated = True
         truncated = self.current_step >= self.max_episode_steps
 
         if failure:
@@ -462,7 +390,7 @@ class FormationEnv(gym.Env):
 
         self.formation_error = np.linalg.norm(self.L1 @ error) /1000.0
         self.tracking_error = np.linalg.norm(error) / 1000.0
-        self.control_effort = np.linalg.norm(self.last_action) / 10.0 
+        self.control_effort = np.mean(np.square(self.last_action))
 
 
         # self.prev_target_dist = dist_to_target
@@ -472,22 +400,14 @@ class FormationEnv(gym.Env):
 
         
         base_reward = (-w1 * (self.formation_error)**2  - w2 * (self.tracking_error)**2 - w3 * (self.control_effort)**2)    
-        
-        tracking_improve = 0.0
- 
+         
         self.prev_formation_error = self.formation_error
         self.prev_tracking_error = self.tracking_error
-        # current_error = formation_error + tracking_error
-
-        # stable_bonus = 0.0
-        # if self.formation_error < 0.2:
-        #     stable_bonus += 0.5
-        # if self.tracking_error < 0.5:
-        #     stable_bonus += 0.2
 
         stable_bonus = np.exp(-4 * self.formation_error)
 
         pos_errors = []
+
         for i, r in enumerate(self.robots):
             pos_i = r.state[[0, 2]]
             desired_i = self.desired_states[i][[0, 2]]
@@ -510,13 +430,52 @@ class FormationEnv(gym.Env):
         else:
             self.stable_steps = 0
 
-        stay_bonus = (
-    self.stable_steps / 500.0
-        ) * max(0.0, 1.0 - self.formation_error)
+        stay_bonus = (self.stable_steps / 500.0) * max(0.0, 1.0 - self.formation_error)
 
         reward += min(stay_bonus, 1.0)
 
         reward += stay_bonus
+
+        self.collision_penalty = 0.0
+        self.robot_collision_penalty = 0.0
+        self.near_obstacle_penalty = 0.0
+
+        collision_distance = self.robot_radius + self.obstacles_radius
+
+        # reward for robot to objects
+        for robot in self.robots:
+            robot_pos = robot.state[[0,2]]
+
+            if len(self.obstacles) > 0 :
+                obstacle_array = np.asanyarray(self.obstacles, dtype=float)
+
+                distance = np.linalg.norm(obstacle_array - robot_pos, axis= 1)
+
+                min_dist = np.min(distance)
+
+                if min_dist < collision_distance:
+                    self.collision_penalty += 1.0
+
+                elif min_dist < self.safe_distance:
+                    self.near_obstacle_penalty += (self.safe_distance - min_dist) / self.safe_distance
+
+        # reward for robot to robot
+        for i in range(self.num_of_bots):
+            for j in range(i + 1, self.num_of_bots):
+
+                pos_i = self.robots[i].state[[0, 2]]
+                pos_j = self.robots[j].state[[0, 2]]
+
+                dist = np.linalg.norm(pos_i - pos_j)
+
+                collision_dist = 2.0 * self.robot_radius
+
+                if dist < collision_dist:
+                    self.robot_collision_penalty += 1.0
+
+        reward -= 10.0 * self.collision_penalty
+        reward -= 10.0 * self.robot_collision_penalty
+        reward -= 2.0 * self.near_obstacle_penalty
 
         return reward
     
@@ -570,6 +529,35 @@ class FormationEnv(gym.Env):
             own_state = self.robots[i].state
             own_error = own_state - self.desired_states[i]
 
+            own_pos = own_state[[0, 2]]
+
+            # -------------------------
+            # nearest obstacle sensing
+            # -------------------------
+            rel_obs = np.array([0.0, 0.0])
+            dist_obs = self.sensing_radius
+
+            if len(self.obstacles) > 0:
+
+                obstacle_array = np.asarray(
+                    self.obstacles,
+                    dtype=float
+                )
+
+                distances = np.linalg.norm(
+                    obstacle_array - own_pos,
+                    axis=1
+                )
+
+                nearest_idx = np.argmin(distances)
+                nearest_dist = distances[nearest_idx]
+
+                if nearest_dist <= self.sensing_radius:
+
+                    nearest_obstacle = obstacle_array[nearest_idx]
+                    rel_obs = nearest_obstacle - own_pos
+                    dist_obs = nearest_dist
+
 
             x_normalize = 100.0
             y_normalize = 50.0
@@ -578,7 +566,11 @@ class FormationEnv(gym.Env):
             own_error[0] / x_normalize,  # x position error
             own_error[1] / y_normalize,   # x velocity error
             own_error[2] / x_normalize,  # y position error
-            own_error[3] / y_normalize    # y velocity error
+            own_error[3] / y_normalize,    # y velocity error
+
+            rel_obs[0] / self.sensing_radius,
+            rel_obs[1] / self.sensing_radius,
+            dist_obs / self.sensing_radius
             ], dtype=np.float32)
 
         return obs
@@ -659,415 +651,4 @@ class FormationEnv(gym.Env):
 
         self.obstacle_spawn_count += 1
         self.last_obstacle_spawn_step = self.current_step
-
-    def calculate_avoidance_subgoal(self, robot_idx):
-        robot = self.robots[robot_idx]
-        own_state = self.robots[robot_idx].state
-        own_pos = own_state[[0, 2]]
-
-        nearest_obstacle = None
-        min_distance = float("inf")
-
-        # -----------------------------------
-        # Geometry of current wall
-        # -----------------------------------
-
-        wall_points = np.array(self.obstacles, dtype=float)
-
-        if len(wall_points) == 0:
-            self.robots[robot_idx].mode = 0
-            return self.desired_states[robot_idx]
-
-        if self.current_wall_dir is None:
-                for i, robot in enumerate(self.robots):
-                    robot.mode = 0
-                return self.desired_states[robot_idx]
-
-        wall_center = np.mean(wall_points, axis=0)
-
-        travel_dir = self.FORMATION_VELOCITY.astype(float)
-        travel_dir /= np.linalg.norm(travel_dir)
-
-        # wall runs perpendicular to travel
-        wall_dir = self.current_wall_dir
-
-        # project wall points onto wall direction
-        wall_projection = (
-            (wall_points - wall_center) @ wall_dir
-        )
-
-        end_1 = (
-            wall_center
-            + np.min(wall_projection) * wall_dir
-        )
-
-        end_2 = (
-            wall_center
-            + np.max(wall_projection) * wall_dir
-        )
-
-        margin = 140.0
-        forward_margin = 120.0
-
-        exit_1 = (
-            end_1
-            - margin * wall_dir
-            + forward_margin * travel_dir
-        )
-
-        exit_2 = (
-            end_2
-            + margin * wall_dir
-            + forward_margin * travel_dir
-        )
-
-        exit_1 = force_exit_forward(
-            exit_1,
-            wall_center,
-            travel_dir,
-            min_forward=150.0
-        )
-
-        exit_2 = force_exit_forward(
-            exit_2,
-            wall_center,
-            travel_dir,
-            min_forward=150.0
-        )
-
-        # Find nearest sensed obstacle
-        for obstacle in self.obstacles:
-            obs_pos = np.asarray(obstacle, dtype=float)
-
-            distance = np.linalg.norm(own_pos - obs_pos)
-
-            rel_pos = obs_pos - own_pos
-
-            # only consider obstacle points ahead
-            if np.dot(rel_pos, travel_dir) <= 0:
-                continue
-
-            if (
-                distance < min_distance
-                and distance < self.sensing_radius
-            ):
-                min_distance = distance
-                nearest_obstacle = obstacle
-
-            if nearest_obstacle is None:
-                robot.mode = 0
-                robot.avoid_side = None
-                return self.desired_states[robot_idx]
-
-            obs_pos = np.asarray(nearest_obstacle, dtype=float)
-            rel_pos = obs_pos - own_pos
-
-            if np.dot(rel_pos, travel_dir) <= 0:
-                continue
-
-            if distance < min_distance and distance < self.sensing_radius:
-                min_distance = distance
-                nearest_obstacle = obstacle
-
-
-
-        # -----------------------------------
-        # MODE SWITCHING / HYSTERESIS
-        # -----------------------------------
-
-        # No obstacle sensed at all
-        if nearest_obstacle is None:
-            robot.mode = 0
-            robot.avoid_side = None
-            return self.desired_states[robot_idx]
-
-        rel_pos = obs_pos - own_pos
-        dist = np.linalg.norm(rel_pos)
-
-        obs_dir = rel_pos / (dist + 1e-6)
-
-        robot_vel = own_state[[1, 3]]
-
-        closing_speed = np.dot(robot_vel, obs_dir)
-
-        base_trigger = 380.0
-        speed_gain = 15.0
-
-        trigger_distance = (
-            base_trigger
-            + speed_gain * max(closing_speed, 0.0)
-        )
-
-        if robot.mode == 0:
-            if min_distance < trigger_distance:
-                robot.mode = 1
-
-        elif robot.mode == 1:
-
-            # how far robot has traveled past the wall
-            wall_progress = np.dot(
-                own_pos - wall_center,
-                travel_dir
-            )
-
-            PASS_MARGIN = 160.0
-
-            # robot has cleared the wall -> stop avoidance
-            if wall_progress > PASS_MARGIN:
-                robot.mode = 0
-                robot.avoid_side = None
-                return self.desired_states[robot_idx]
-
-        if robot.mode == 0:
-            if min_distance < trigger_distance:
-                robot.mode = 1
-
-        
-       # -----------------------------------
-        # AVOIDANCE MODE
-        # -----------------------------------
-
-        wall_x_mean = np.mean([obs[0] for obs in self.obstacles])
-        wall_y_min = min(obs[1] for obs in self.obstacles)
-        wall_y_max = max(obs[1] for obs in self.obstacles)
-        wall_center_y = 0.5 * (wall_y_min + wall_y_max)
-
-      # Preserve existing side
-        if (
-            robot.mode == 1
-            and getattr(robot, "avoid_side", None) is not None
-        ):
-            chosen_side = robot.avoid_side
-        else:
-            chosen_side = None
-
-        cost_1 = np.linalg.norm(exit_1 - own_pos)
-        cost_2 = np.linalg.norm(exit_2 - own_pos)
-
-        own_side = -1.0 if cost_1 < cost_2 else 1.0
-
-        cost_difference = abs(cost_1 - cost_2)
-
-        GEOMETRY_THRESHOLD = 80.0
-
-        if cost_difference > GEOMETRY_THRESHOLD:
-            chosen_side = own_side
-
-        # -------------------------
-        # RULE 1
-        # ONLY if robot has no side yet
-        # -------------------------
-        if chosen_side is None:
-
-            candidate_neighbor = None
-            best_progress = -float("inf")
-
-            for neighbor_idx in robot.neighbor_indexs:
-
-                neighbor = self.robots[neighbor_idx]
-
-                if (
-                    neighbor.mode == 1
-                    and getattr(neighbor, "avoid_side", None) is not None
-                ):
-
-                    neighbor_pos = neighbor.state[[0, 2]]
-
-                    rel_to_anchor = (
-                        neighbor_pos - self.formation_anchor
-                    )
-
-                    progress = np.dot(
-                        rel_to_anchor,
-                        travel_dir
-                    )
-
-                    if progress > best_progress:
-                        best_progress = progress
-                        candidate_neighbor = neighbor
-
-            if candidate_neighbor is not None:
-                chosen_side = candidate_neighbor.avoid_side
-
-
-        # -------------------------
-        # RULE 2: own geometry choice
-        # only if Rule 1 gave no direction
-        # -------------------------
-        if chosen_side is None:
-
-            exit_1 = (
-                end_1
-                - margin * wall_dir
-                + forward_margin * travel_dir
-            )
-
-            exit_2 = (
-                end_2
-                + margin * wall_dir
-                + forward_margin * travel_dir
-            )
-
-            exit_1 = force_exit_forward(
-                exit_1,
-                wall_center,
-                travel_dir,
-                min_forward=150.0
-            )
-
-            exit_2 = force_exit_forward(
-                exit_2,
-                wall_center,
-                travel_dir,
-                min_forward=150.0
-            )
-
-            # print(
-            #     "exit_1:", exit_1,
-            #     "exit_2:", exit_2
-            # )
-
-            cost_1 = np.linalg.norm(exit_1 - own_pos)
-            cost_2 = np.linalg.norm(exit_2 - own_pos)
-
-            if cost_1 < cost_2:
-                chosen_side = -1.0   # UP
-            else:
-                chosen_side = 1.0    # DOWN
-
-
-        robot.avoid_side = chosen_side
-
-
-        # -------------------------
-        # actual subgoal
-        # -------------------------
-        margin = 60.0
-
-        if robot.avoid_side < 0:
-            target_pos = exit_1
-        else:
-            target_pos = exit_2
-
-        subgoal = self.desired_states[robot_idx].copy()
-
-        subgoal[0] = target_pos[0]
-        subgoal[2] = target_pos[1]
-
-        side_dir = np.array([
-                    -travel_dir[1],
-                    travel_dir[0]
-                ])
-
-        return np.array([
-            subgoal[0],
-            0.0,             # important
-            subgoal[2],
-            0.0
-        ])
-    def rebalance_avoidance_groups(self):
-
-        active = [
-            i for i, r in enumerate(self.robots)
-            if r.mode == 1 and getattr(r, "avoid_side", None) is not None
-        ]
-
-        if len(active) < 3:
-            return
-
-        side_neg = [
-            i for i in active
-            if self.robots[i].avoid_side < 0
-        ]
-
-        side_pos = [
-            i for i in active
-            if self.robots[i].avoid_side > 0
-        ]
-
-        MIN_GROUP_SIZE = 2
-
-        # no actual split, so don't force one
-        if len(side_neg) == 0 or len(side_pos) == 0:
-            return
-
-        wall_points = np.asarray(self.obstacles, dtype=float)
-        if len(wall_points) == 0:
-            return
-
-        wall_center = np.mean(wall_points, axis=0)
-
-        travel_dir = self.FORMATION_VELOCITY.astype(float)
-        travel_dir /= np.linalg.norm(travel_dir)
-
-        wall_dir = self.current_wall_dir
-
-        wall_projection = (
-            wall_points - wall_center
-        ) @ wall_dir
-
-        end_1 = (
-            wall_center
-            + np.min(wall_projection) * wall_dir
-        )
-
-        end_2 = (
-            wall_center
-            + np.max(wall_projection) * wall_dir
-        )
-
-        margin = 140.0
-        forward_margin = 120.0
-
-        exit_1 = (
-            end_1
-            - margin * wall_dir
-            + forward_margin * travel_dir
-        )
-
-        exit_2 = (
-            end_2
-            + margin * wall_dir
-            + forward_margin * travel_dir
-        )
-
-        # Case: only one robot on -1 side
-        if len(side_neg) < MIN_GROUP_SIZE and len(side_pos) > MIN_GROUP_SIZE:
-
-            candidate = min(
-                side_pos,
-                key=lambda i: np.linalg.norm(
-                    self.robots[i].state[[0, 2]] - exit_1
-                )
-            )
-
-            self.robots[candidate].avoid_side = -1.0
-
-        # Case: only one robot on +1 side
-        elif len(side_pos) < MIN_GROUP_SIZE and len(side_neg) > MIN_GROUP_SIZE:
-
-            candidate = min(
-                side_neg,
-                key=lambda i: np.linalg.norm(
-                    self.robots[i].state[[0, 2]] - exit_2
-                )
-            )
-
-            self.robots[candidate].avoid_side = 1.0
-
-def force_exit_forward(exit_point, wall_center, travel_dir, min_forward=120.0):
-
-    forward_progress = np.dot(
-        exit_point - wall_center,
-        travel_dir
-    )
-
-    if forward_progress < min_forward:
-        exit_point = (
-            exit_point
-            + (min_forward - forward_progress) * travel_dir
-        )
-
-    return exit_point
-
 

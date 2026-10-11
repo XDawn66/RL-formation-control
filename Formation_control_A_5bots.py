@@ -91,20 +91,20 @@ def run_sim():
     # Load a pre-trained model (make sure to adjust the path and filename as needed), only one of the lines below should be uncommented at a time, depending on which model you want to load
 
     #model = PPO.load("demo/no_target_ppo/test_4711_400k.zip",myenv, tensorboard_log="./sac_car_env/")
-    model = SAC.load("models/sac_gamma_5bots_tran_II/test_125k.zip",myenv, tensorboard_log="./sac_car_env/")
+    ##model = SAC.load("models/sac_gamma_5bots_tran_II/test_125k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = SAC.load("models/sac_gamma_5bots_III/test_250k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = DDPG.load("demo/no_target_ddpg/test_4711_400k.zip",myenv, tensorboard_log="./DDPG_formation_env/")
-
+    model = SAC.load("models\sac_avoid_5bot_I/test_100k.zip",myenv, tensorboard_log="./sac_car_env/")
     # train a model
 
     # model.learn(total_steps)
     # model.save(f"models/test_trace_4711/test_trace_4711_300k")
 
     # training in increments and saving intermediate models
-    # for i in range(1,10):
-    #     model.learn(total_timesteps=25000, reset_num_timesteps=False)
-    #     model.save(f"models/sac_gamma_5bots_tran_II/test_{i*25}k")
-    # clock = pygame.time.Clock()
+    for i in range(5,10):
+        model.learn(total_timesteps=25000, reset_num_timesteps=False)
+        model.save(f"models/sac_avoid_5bot_I/test_{i*25}k")
+    clock = pygame.time.Clock()
 
     # Main Loop
     running = True
@@ -198,7 +198,7 @@ def run_sim():
         
         # myenv.Tz()  # Removed redundant render call
         total_steps += 1  # Increment step count
-        # if total_steps % 46000 == 0:
+        # if total_steps % 12000 == 0:
         #     # print("Training... at step ", total_steps)
         #     obs, info = myenv.reset()
         if terminated:

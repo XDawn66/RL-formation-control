@@ -174,7 +174,7 @@ class FormationEnv(gym.Env):
         self.obstacle_spawn_cooldown = 12000
 
         self.FORMATION_READY_THRESHOLD = 0.08
-        self.OBSTACLE_SPAWN_DISTANCE = 1500.0
+        self.OBSTACLE_SPAWN_DISTANCE = 1200.0
 
         self.current_wall_dir = None
         self.current_wall_angle = None
