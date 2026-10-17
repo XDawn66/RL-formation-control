@@ -9,7 +9,9 @@ from stable_baselines3 import SAC
 from stable_baselines3 import PPO
 from stable_baselines3 import DDPG
 # Simulation Parameters
-from transformer_extractor import RobotTransformerExtractor
+from transformer_extractor_2 import RobotTransformerExtractor
+
+from custom_sac_policy import PerTokenSACPolicy
 
 hist = {"t": [], "x": [], "y": [], "anchor_x": [], "anchor_y": []}
 # Create a DataFrame to store the history of robot positions
@@ -27,6 +29,8 @@ class Robot:
         self.action = [0,0]
         self.neighbor_indexs = []
         self.mode = 0  # Default mode for the robot
+
+
 
 
     def get_obs(self, neighbors, desired_states):
@@ -79,32 +83,39 @@ def run_sim():
 )
 
 
-    # if you want to train from scratch, use the line below to create a new model. Otherwise, load a pre-trained model with the lines below that.
+#     # if you want to train from scratch, use the line below to create a new model. Otherwise, load a pre-trained model with the lines below that.
+#     model = SAC(
+#     "MlpPolicy",
+#     myenv,
+#     policy_kwargs=policy_kwargs,    # <-- THIS is where you use it
+#     verbose=1,
+#     tensorboard_log="./SAC_formation_env/"
+# )
+
     model = SAC(
-    "MlpPolicy",
+    PerTokenSACPolicy,
     myenv,
-    policy_kwargs=policy_kwargs,    # <-- THIS is where you use it
+    policy_kwargs=policy_kwargs,
     verbose=1,
     tensorboard_log="./SAC_formation_env/"
-)
-
+    )
     # Load a pre-trained model (make sure to adjust the path and filename as needed), only one of the lines below should be uncommented at a time, depending on which model you want to load
 
     #model = PPO.load("demo/no_target_ppo/test_4711_400k.zip",myenv, tensorboard_log="./sac_car_env/")
     ##model = SAC.load("models/sac_gamma_5bots_tran_II/test_125k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = SAC.load("models/sac_gamma_5bots_III/test_250k.zip",myenv, tensorboard_log="./sac_car_env/")
     #model = DDPG.load("demo/no_target_ddpg/test_4711_400k.zip",myenv, tensorboard_log="./DDPG_formation_env/")
-    model = SAC.load("models\sac_avoid_5bot_I/test_100k.zip",myenv, tensorboard_log="./sac_car_env/")
+    model = SAC.load("models\cust_sac_avoid_5bot_III/test_75k.zip",myenv, tensorboard_log="./sac_car_env/")
     # train a model
 
     # model.learn(total_steps)
     # model.save(f"models/test_trace_4711/test_trace_4711_300k")
 
     # training in increments and saving intermediate models
-    for i in range(5,10):
-        model.learn(total_timesteps=25000, reset_num_timesteps=False)
-        model.save(f"models/sac_avoid_5bot_I/test_{i*25}k")
-    clock = pygame.time.Clock()
+    # for i in range(1,5):
+    #     model.learn(total_timesteps=25000, reset_num_timesteps=False)
+    #     model.save(f"models/cust_sac_avoid_5bot_III/test_{i*25}k")
+    # clock = pygame.time.Clock()
 
     # Main Loop
     running = True
@@ -197,8 +208,8 @@ def run_sim():
         myenv.render(camera_x, camera_y)
         
         # myenv.Tz()  # Removed redundant render call
-        total_steps += 1  # Increment step count
-        # if total_steps % 12000 == 0:
+        # total_steps += 1  # Increment step count
+        # if total_steps % 24000 == 0:
         #     # print("Training... at step ", total_steps)
         #     obs, info = myenv.reset()
         if terminated:
@@ -246,7 +257,13 @@ if __name__ == "__main__":
 
     # final desired formation points
     final_anchor = np.array([hist["anchor_x"][-1], hist["anchor_y"][-1]])
-    FORMATION_OFFSET = np.array([[0, 0], [15, 0], [0,15], [25,15], [8,25]])
+    FORMATION_OFFSET = np.array([
+    [0, 0],
+    [30, 0],
+    [0, 30],
+    [50, 30],
+    [16, 50]
+])
     for i, offset in enumerate(FORMATION_OFFSET):
         desired_point = final_anchor + offset
         plt.scatter(desired_point[0], desired_point[1], marker="*", s=150, label=f"Desired {i+1}")

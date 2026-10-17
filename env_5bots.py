@@ -16,7 +16,7 @@ class FormationEnv(gym.Env):
         self.num_of_bots = 5
 
         self.max_robots = 20
-        self.robot_feature_dim = 7
+        self.robot_feature_dim = 10
         
         # self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2* self.num_of_bots,), dtype=np.float32)
         # self.observation_space = spaces.Box(low=-1.0, high=1.0, shape=(48,), dtype=np.float32)
@@ -33,12 +33,11 @@ class FormationEnv(gym.Env):
         # try to make a triangle
         self.FORMATION_OFFSET = np.array([
             [0, 0],
-            [15, 0],
-            [0, 15],
-            [25, 15],
-            [8, 25]
+            [30, 0],
+            [0, 30],
+            [50, 30],
+            [16, 50]
         ])
-
         # adjacency matrix for a directed graph
         # self.A = np.array([
         #     [0, 1, 0],
@@ -143,7 +142,7 @@ class FormationEnv(gym.Env):
         self.divergence_patience = 200   # 200 steps = 1 simulated second at dt=0.005
         self.divergence_margin = 0.32    # must be 20% worse than best error
         self.warmup_steps = 200          # do not terminate immediately after reset
-        self.max_episode_steps = 50000
+        self.max_episode_steps = 30000
 
         # local stable test
         # eigvals = np.linalg.eigvals(self.L)
@@ -160,7 +159,6 @@ class FormationEnv(gym.Env):
         self.safe_distance = 30.0  # safe distance for avoidance mode
         self.robot_radius = 5.0  # radius of the robot for avoidance mode
         self.sensing_radius = 500.0
-        self.avoidance_distance = 100.0
 
         self.obstacle_spawned = False
         self.obstacles = []
@@ -175,9 +173,25 @@ class FormationEnv(gym.Env):
         self.FORMATION_READY_THRESHOLD = 0.1
         self.OBSTACLE_SPAWN_DISTANCE = 1500.0
 
-        self.current_wall_dir = None
-        self.current_wall_angle = None
-        self.current_wall_half_length = None
+
+        self.avoidance_distance = 300.0
+        self.robot_avoidance_distance = 60.0
+
+        self.robot_sensing_radius = 100.0
+
+        self.nearest_robot_dist = np.full(self.num_of_bots,self.robot_sensing_radius)
+
+        self.nearest_obstacle_dist = np.full(
+            self.num_of_bots,
+            self.sensing_radius
+        )
+
+        # fixed obstacle parameters
+        self.fixed_obstacle_radius = 70.0
+        self.fixed_obstacle_offset = 700.0
+
+        self.formation_stable_steps = 0
+        self.required_stable_steps = 500
 
 
     def step(self, actions):
@@ -262,29 +276,51 @@ class FormationEnv(gym.Env):
             >= self.obstacle_spawn_cooldown
         )
 
+        if self.formation_error < self.FORMATION_READY_THRESHOLD:
+            self.formation_stable_steps += 1
+        else:
+            self.formation_stable_steps = 0
+
         if (
-            self.formation_error < self.FORMATION_READY_THRESHOLD
+            self.formation_stable_steps >= self.required_stable_steps
             and can_spawn_again
             and self.obstacle_spawn_count < self.max_obstacle_spawns
         ):
-            self.spawn_test_wall()
+            self.spawn_fixed_obstacle()
 
+            self.formation_stable_steps = 0
                 
         for i, robot in enumerate(self.robots):
             r_i = r[2*i:2*i+2].copy()
 
-            AVOID_SCALE = 3.0
+            AVOID_SCALE = 5.0
 
-            u_avoid = AVOID_SCALE * avoid_actions[i]
+            formation_scale = 1.0
 
-            # avoidance control
+            u_avoid = np.zeros(2)
+
+            obstacle_close = self.nearest_obstacle_dist[i] < self.avoidance_distance
+            robot_close = self.nearest_robot_dist[i] < self.robot_avoidance_distance
+
+            if obstacle_close or robot_close:
+                formation_scale = 0.2
+                u_avoid = AVOID_SCALE * avoid_actions[i]
+
+
+            # if obstacle_close:
+            #     formation_scale = 0.2
+            # elif robot_close:
+            #     formation_scale = 0.5
+
+            r_i = formation_scale * r[2*i:2*i+2].copy()
             r_i += u_avoid
-
-            # tracking control
             r_i += u_track
 
-            # emergency repulsion can go here
+            # # avoidance control
             # r_i += u_avoid
+
+            # # tracking control
+            # r_i += u_track
 
             # final actuator limit
             r_i = np.clip(r_i, -10.0, 10.0)
@@ -325,6 +361,15 @@ class FormationEnv(gym.Env):
 
         failure = False
 
+        # print(
+        #     f"robot {i}: "
+        #     f"formation={r[2*i:2*i+2]}, "
+        #     f"avoid={u_avoid}, "
+        #     f"obs_dist={self.nearest_obstacle_dist[i]}, "
+        #     f"robot_dist={self.nearest_robot_dist[i]}"
+        # )
+
+
         if self.current_step > self.warmup_steps:
 
             # Update best result seen during this episode
@@ -350,13 +395,16 @@ class FormationEnv(gym.Env):
 
         #terminated = failure
         terminated = False
-        if self.collision_penalty > 0:
-            terminated = True
+        
+        # if self.collision_penalty > 3:
+        #     terminated = True
+        #     reward = -10.0
 
         if self.robot_collision_penalty > 0:
-            terminated = True
+            # terminated = True
+            reward = -10.0
 
-        if reward < -10.0:
+        if reward < -100.0:
             terminated = True
         truncated = self.current_step >= self.max_episode_steps
 
@@ -471,11 +519,16 @@ class FormationEnv(gym.Env):
                 collision_dist = 2.0 * self.robot_radius
 
                 if dist < collision_dist:
-                    self.robot_collision_penalty += 1.0
+                    self.robot_collision_penalty += 0.0
 
         reward -= 10.0 * self.collision_penalty
-        reward -= 10.0 * self.robot_collision_penalty
+        reward -= 5.0 * self.robot_collision_penalty
         reward -= 2.0 * self.near_obstacle_penalty
+
+        # print("reward", reward)
+        # print("collision_penalty", self.collision_penalty)
+        # print("robot_collision_penalty", self.robot_collision_penalty)
+        # print("near_obstacle_penalty", self.near_obstacle_penalty)
 
         return reward
     
@@ -531,11 +584,36 @@ class FormationEnv(gym.Env):
 
             own_pos = own_state[[0, 2]]
 
+
+            # -------------------------
+            # sensing initialization
+            # -------------------------
+
+            rel_obs = np.array([0.0, 0.0])
+            dist_obs = self.sensing_radius
+
+            rel_robot = np.array([0.0, 0.0])
+            dist_robot = self.robot_sensing_radius
+
+            # -------------------------
+            # nearest robot sensing
+            # -------------------------
+
+            for j in range(self.num_of_bots):
+
+                if j == i:
+                    continue
+
+                other_pos = self.robots[j].state[[0, 2]]
+                d = np.linalg.norm(other_pos - own_pos)
+
+                if d < dist_robot:
+                    dist_robot = d
+                    rel_robot = other_pos - own_pos
+            
             # -------------------------
             # nearest obstacle sensing
             # -------------------------
-            rel_obs = np.array([0.0, 0.0])
-            dist_obs = self.sensing_radius
 
             if len(self.obstacles) > 0:
 
@@ -555,9 +633,12 @@ class FormationEnv(gym.Env):
                 if nearest_dist <= self.sensing_radius:
 
                     nearest_obstacle = obstacle_array[nearest_idx]
+
                     rel_obs = nearest_obstacle - own_pos
                     dist_obs = nearest_dist
 
+            self.nearest_robot_dist[i] = dist_robot
+            self.nearest_obstacle_dist[i] = dist_obs
 
             x_normalize = 100.0
             y_normalize = 50.0
@@ -570,7 +651,11 @@ class FormationEnv(gym.Env):
 
             rel_obs[0] / self.sensing_radius,
             rel_obs[1] / self.sensing_radius,
-            dist_obs / self.sensing_radius
+            dist_obs / self.sensing_radius,
+
+            rel_robot[0] / self.robot_sensing_radius,
+            rel_robot[1] / self.robot_sensing_radius,
+            dist_robot / self.robot_sensing_radius
             ], dtype=np.float32)
 
         return obs
@@ -648,6 +733,27 @@ class FormationEnv(gym.Env):
         ):
             point = wall_center + offset * wall_dir
             self.obstacles.append(point)
+
+        self.obstacle_spawn_count += 1
+        self.last_obstacle_spawn_step = self.current_step
+
+    def spawn_fixed_obstacle(self):
+
+        travel_dir = (
+            self.FORMATION_VELOCITY.astype(float)
+            / np.linalg.norm(self.FORMATION_VELOCITY)
+        )
+
+        obstacle_center = (
+            self.formation_anchor
+            + self.fixed_obstacle_offset * travel_dir
+        )
+
+        self.obstacles = [
+            obstacle_center
+        ]
+
+        self.obstacles_radius = self.fixed_obstacle_radius
 
         self.obstacle_spawn_count += 1
         self.last_obstacle_spawn_step = self.current_step
